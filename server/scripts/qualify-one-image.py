@@ -85,6 +85,7 @@ def main(image):
         assert not login(password)['valid']
         assert '/app/server/.env' not in docker('diff', name), 'Runtime credentials were persisted'
         docker('stop', '--time', '60', name)
+        assert docker('inspect', '--format', '{{.State.ExitCode}}', name) == '0', 'Managed image did not stop cleanly'
         docker('rm', name)
         fields['JWT_SECRET'] = secrets.token_urlsafe(32)
         start()

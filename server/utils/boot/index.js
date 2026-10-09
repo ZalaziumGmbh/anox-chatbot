@@ -8,6 +8,7 @@ const markOnboarded = require("./markOnboarded");
 const migrateWebBrowsingToDefault = require("./migrateWebBrowsingToDefault");
 const { PushNotifications } = require("../PushNotifications");
 const { TelegramBotService } = require("../telegramBot");
+const { managedShutdown } = require("./managedShutdown");
 
 // Testing SSL? You can make a self signed certificate and point the ENVs to that location
 // make a directory in server called 'sslcert' - cd into it
@@ -46,6 +47,7 @@ function bootSSL(app, port = 3001) {
       .on("error", catchSigTerms);
 
     require("@mintplex-labs/express-ws").default(app, server);
+    managedShutdown(server, () => require("../prisma").$disconnect());
     return { app, server };
   } catch (e) {
     console.error(
@@ -64,7 +66,7 @@ function bootSSL(app, port = 3001) {
 function bootHTTP(app, port = 3001) {
   if (!app) throw new Error('No "app" defined - crashing!');
 
-  app
+  const server = app
     .listen(port, async () => {
       await migrateWebBrowsingToDefault(); // must run before markOnboarded() so a fresh instance is not mistaken for an existing one.
       await markOnboarded();
@@ -79,7 +81,8 @@ function bootHTTP(app, port = 3001) {
     })
     .on("error", catchSigTerms);
 
-  return { app, server: null };
+  managedShutdown(server, () => require("../prisma").$disconnect());
+  return { app, server };
 }
 
 function catchSigTerms() {

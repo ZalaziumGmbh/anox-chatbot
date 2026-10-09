@@ -16,6 +16,32 @@ if [ -z "$STORAGE_DIR" ]; then
     echo "================================================================"
 fi
 
+if [ "${ONE_MANAGED_RUNTIME:-false}" = "true" ]; then
+  cd /app/server/ || exit 1
+  export CHECKPOINT_DISABLE=1
+  npx prisma generate --schema=./prisma/schema.prisma || exit 1
+  npx prisma migrate deploy --schema=./prisma/schema.prisma || exit 1
+  node /app/server/scripts/zalazium-one-bootstrap.cjs || exit 1
+  node /app/server/index.js &
+  server_pid=$!
+  node /app/collector/index.js &
+  collector_pid=$!
+  stop_managed() {
+    trap '' TERM INT
+    kill -TERM "$server_pid" "$collector_pid" 2>/dev/null || true
+    status=0
+    wait "$server_pid" || status=1
+    wait "$collector_pid" || status=1
+    exit "$status"
+  }
+  trap stop_managed TERM INT
+  wait -n "$server_pid" "$collector_pid"
+  # One child exiting unexpectedly must not leave half a healthy application.
+  kill -TERM "$server_pid" "$collector_pid" 2>/dev/null || true
+  wait "$server_pid" "$collector_pid" 2>/dev/null || true
+  exit 1
+fi
+
 {
   cd /app/server/ &&
     # Disable Prisma CLI telemetry (https://www.prisma.io/docs/orm/tools/prisma-cli#how-to-opt-out-of-data-collection)

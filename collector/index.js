@@ -213,7 +213,7 @@ app.all("*", function (_, response) {
   response.sendStatus(200);
 });
 
-app
+const server = app
   .listen(COLLECTOR_PORT, async () => {
     await wipeCollectorStorage();
     console.log(`Document processor app listening on port ${COLLECTOR_PORT}`);
@@ -226,3 +226,5 @@ app
       process.kill(process.pid, "SIGINT");
     });
   });
+
+require("../server/utils/boot/managedShutdown").managedShutdown(server);

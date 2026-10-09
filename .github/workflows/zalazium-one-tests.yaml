@@ -4,6 +4,7 @@ on:
     branches: [zalazium-dev]
   push:
     branches: [fix/zalazium-one-chatbot]
+  workflow_call:
 permissions:
   contents: read
 jobs:

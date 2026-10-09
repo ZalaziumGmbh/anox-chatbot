@@ -22,6 +22,9 @@ fi
     export CHECKPOINT_DISABLE=1 &&
     npx prisma generate --schema=./prisma/schema.prisma &&
     npx prisma migrate deploy --schema=./prisma/schema.prisma &&
+    if [ "${ONE_MANAGED_RUNTIME:-false}" = "true" ]; then
+      node /app/server/scripts/zalazium-one-bootstrap.cjs
+    fi &&
     node /app/server/index.js
 } &
 { node /app/collector/index.js; } &

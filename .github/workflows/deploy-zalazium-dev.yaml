@@ -31,7 +31,7 @@ jobs:
           printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
             "$(dpkg --print-architecture)" "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras
+          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo
           sudo useradd --create-home tester
           test_uid=$(id -u tester)
           sudo loginctl enable-linger tester
@@ -81,8 +81,22 @@ jobs:
               XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
               DOCKER_CONFIG=/dev/shm/zalazium/registry docker "$@"
           }
-          trap 'clean_docker logout >/dev/null 2>&1; sudo rm -rf /dev/shm/zalazium/registry' EXIT
-          printf '%s' "$REGISTRY_PASSWORD" | clean_docker login --username "$REGISTRY_USER" --password-stdin
-          clean_docker push "zalaziumcode/chatbot:one-$GITHUB_SHA"
-          clean_docker image inspect "zalaziumcode/chatbot:one-$GITHUB_SHA" --format '{{json .RepoDigests}}'
-          # The moving update channel is promoted separately after stack/schema acceptance.
+          # Transfer the exact tested image over the runner's host network. Registry
+          # authentication inside RootlessKit repeatedly timed out on Docker Hub.
+          clean_skopeo() {
+            sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+              XDG_RUNTIME_DIR="/run/user/${test_uid}" skopeo "$@"
+          }
+          trap 'sudo rm -rf /dev/shm/zalazium/registry /home/tester/one-image.tar /home/tester/one-image.digest' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | clean_skopeo login \
+            --authfile /dev/shm/zalazium/registry/auth.json --username "$REGISTRY_USER" --password-stdin docker.io
+          candidate="zalaziumcode/chatbot:one-$GITHUB_SHA"
+          tested_id=$(clean_docker image inspect "$candidate" --format '{{.Id}}')
+          clean_docker save --output /home/tester/one-image.tar "$candidate"
+          clean_skopeo copy --retry-times 3 --dest-authfile /dev/shm/zalazium/registry/auth.json \
+            --digestfile /home/tester/one-image.digest docker-archive:/home/tester/one-image.tar "docker://$candidate"
+          published_id=$(clean_skopeo inspect --authfile /dev/shm/zalazium/registry/auth.json --raw "docker://$candidate" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
+          test "$tested_id" = "$published_id"
+          cat /home/tester/one-image.digest
+          # Moving channels still require separate stack/schema acceptance.

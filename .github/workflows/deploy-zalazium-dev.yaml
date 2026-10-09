@@ -31,7 +31,7 @@ jobs:
           printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
             "$(dpkg --print-architecture)" "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo
+          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo acl
           sudo useradd --create-home tester
           test_uid=$(id -u tester)
           sudo loginctl enable-linger tester
@@ -39,14 +39,14 @@ jobs:
           sudo install -d -m 700 -o tester -g tester /home/tester/.config/systemd/user/docker.service.d
           printf '[Service]\nExecStart=\nExecStart=/usr/bin/env -i HOME=/home/tester USER=tester LOGNAME=tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin XDG_CONFIG_HOME=/home/tester/.config XDG_DATA_HOME=/home/tester/.local/share XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus NOTIFY_SOCKET=${NOTIFY_SOCKET} /usr/bin/dockerd-rootless.sh\n' \
             "$test_uid" "$test_uid" | sudo tee /home/tester/.config/systemd/user/docker.service.d/runtime.conf >/dev/null
-          # Fresh CI builder only: avoid rootless overlay ACL and FUSE mount failures.
-          sudo install -d -m 700 -o tester -g tester /home/tester/.config/docker
-          printf '%s\n' '{"features":{"containerd-snapshotter":false},"storage-driver":"vfs"}' \
-            | sudo tee /home/tester/.config/docker/daemon.json >/dev/null
           sudo chown -R tester:tester /home/tester/.config
           sudo mkdir -p /home/tester/app
           sudo rsync -rl --exclude=.git --include='/docker/.env.example' --include='/frontend/.env.production' --exclude='.env*' --exclude=data ./ /home/tester/app/
           sudo chown -R tester:tester /home/tester/app
+          # Host-inherited ACL entries reference UIDs outside the rootless mapping.
+          # Clear them before the image store is created, retaining ordinary modes.
+          sudo setfacl -Rb /home/tester
+          sudo setfacl -Rk /home/tester
           sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
             XDG_RUNTIME_DIR="/run/user/${test_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${test_uid}/bus" \
             dockerd-rootless-setuptool.sh install --force || {

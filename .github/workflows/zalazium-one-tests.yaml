@@ -27,7 +27,7 @@ jobs:
           node_bin=$(dirname "$(command -v node)")
           sudo useradd --create-home tester
           sudo mkdir -p /home/tester/chatbot
-          sudo rsync -rl --exclude=.git --exclude='.env*' --exclude=node_modules ./ /home/tester/chatbot/
+          sudo rsync -rl --exclude=.git --include='/docker/.env.example' --include='/frontend/.env.production' --exclude='.env*' --exclude=node_modules ./ /home/tester/chatbot/
           sudo chown -R tester:tester /home/tester/chatbot
           sudo runuser -u tester -- env -i HOME=/home/tester PATH="$node_bin:/usr/bin:/bin" CI=true PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true ONE_SYNTHETIC_TEST=1 sh -c '
             set -eu

@@ -88,6 +88,9 @@ jobs:
               sha256sum image.tar > SHA256SUMS
               chmod 644 image.tar image-id.txt revision.txt SHA256SUMS
             '
+          # The Actions runner needs traversal after inherited ACLs were removed.
+          # Only the qualified archive directory contains uploadable artifacts.
+          sudo chmod o+x /home/tester
       - uses: actions/upload-artifact@v4
         with:
           name: qualified-image-${{ github.sha }}

@@ -31,7 +31,7 @@ jobs:
           printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
             "$(dpkg --print-architecture)" "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
           sudo apt-get update -qq
-          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo
+          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo fuse-overlayfs
           sudo useradd --create-home tester
           test_uid=$(id -u tester)
           sudo loginctl enable-linger tester
@@ -39,6 +39,10 @@ jobs:
           sudo install -d -m 700 -o tester -g tester /home/tester/.config/systemd/user/docker.service.d
           printf '[Service]\nExecStart=\nExecStart=/usr/bin/env -i HOME=/home/tester USER=tester LOGNAME=tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin XDG_CONFIG_HOME=/home/tester/.config XDG_DATA_HOME=/home/tester/.local/share XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus NOTIFY_SOCKET=${NOTIFY_SOCKET} /usr/bin/dockerd-rootless.sh\n' \
             "$test_uid" "$test_uid" | sudo tee /home/tester/.config/systemd/user/docker.service.d/runtime.conf >/dev/null
+          # Fresh CI builder only: avoid rootless native-overlay ACL copy failures.
+          sudo install -d -m 700 -o tester -g tester /home/tester/.config/docker
+          printf '%s\n' '{"features":{"containerd-snapshotter":false},"storage-driver":"fuse-overlayfs"}' \
+            | sudo tee /home/tester/.config/docker/daemon.json >/dev/null
           sudo chown -R tester:tester /home/tester/.config
           sudo mkdir -p /home/tester/app
           sudo rsync -rl --exclude=.git --include='/docker/.env.example' --include='/frontend/.env.production' --exclude='.env*' --exclude=data ./ /home/tester/app/
@@ -106,7 +110,7 @@ jobs:
               DOCKER_CONFIG=/dev/shm/zalazium/registry docker "$@"
           }
           # Transfer the exact tested image over the runner's host network. Registry
-          # authentication inside RootlessKit repeatedly timed out on Docker Hub.
+          # The archive also permits a publication retry without rebuilding the image.
           clean_skopeo() {
             sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
               XDG_RUNTIME_DIR="/run/user/${test_uid}" skopeo "$@"
@@ -115,7 +119,8 @@ jobs:
           printf '%s' "$REGISTRY_PASSWORD" | clean_skopeo login \
             --authfile /dev/shm/zalazium/registry/auth.json --username "$REGISTRY_USER" --password-stdin docker.io
           candidate="zalaziumcode/chatbot:one-$GITHUB_SHA"
-          tested_id=$(clean_docker image inspect "$candidate" --format '{{.Id}}')
+          tested_id=$(clean_skopeo inspect --raw docker-archive:/home/tester/qualified/image.tar \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
           clean_skopeo copy --retry-times 3 --dest-authfile /dev/shm/zalazium/registry/auth.json \
             --digestfile /home/tester/one-image.digest docker-archive:/home/tester/qualified/image.tar "docker://$candidate"
           published_id=$(clean_skopeo inspect --authfile /dev/shm/zalazium/registry/auth.json --raw "docker://$candidate" \

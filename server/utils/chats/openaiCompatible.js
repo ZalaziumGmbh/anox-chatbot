@@ -1,9 +1,11 @@
 const { v4: uuidv4 } = require("uuid");
 const { DocumentManager } = require("../DocumentManager");
 const { WorkspaceChats } = require("../../models/workspaceChats");
-const { getVectorDbClass, getLLMProvider } = require("../helpers");
+const { getVectorDbClass, resolveProviderConnector } = require("../helpers");
+const { addChatCostToMetrics } = require("../helpers/modelPricing");
 const { writeResponseChunk } = require("../helpers/chat/responses");
 const { chatPrompt, sourceIdentifier } = require("./index");
+const { abortConnectorOnClientDisconnect } = require("../helpers/abortSignals");
 
 const { PassThrough } = require("stream");
 
@@ -12,14 +14,27 @@ async function chatSync({
   systemPrompt = null,
   history = [],
   prompt = null,
+  attachments = [],
   temperature = null,
 }) {
   const uuid = uuidv4();
-  const chatMode = workspace?.chatMode ?? "chat";
-  const LLMConnector = getLLMProvider({
-    provider: workspace?.chatProvider,
-    model: workspace?.chatModel,
-  });
+  const chatMode = workspace?.chatMode ?? "automatic";
+
+  const { connector: LLMConnector, routingMetadata } =
+    await resolveProviderConnector({
+      workspace,
+      prompt,
+      attachments,
+      temperature,
+      chatHistoryOverride: {
+        rawHistory: history,
+        chatHistory: history,
+      },
+      // Do not +1 to this, since OAI message history ends in a user message
+      // and does not need to re-include an uncounted user message.
+      messageCountOverride: history.length,
+    });
+
   const VectorDb = getVectorDbClass();
   const hasVectorizedSpace = await VectorDb.hasNamespace(workspace.slug);
   const embeddingsCount = await VectorDb.namespaceCount(workspace.slug);
@@ -38,6 +53,7 @@ async function chatSync({
         text: textResponse,
         sources: [],
         type: chatMode,
+        attachments,
       },
       include: false,
     });
@@ -84,7 +100,7 @@ async function chatSync({
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
           namespace: workspace.slug,
-          input: prompt,
+          input: String(prompt),
           LLMConnector,
           similarityThreshold: workspace?.similarityThreshold,
           topN: workspace?.topN,
@@ -125,11 +141,12 @@ async function chatSync({
 
     await WorkspaceChats.new({
       workspaceId: workspace.id,
-      prompt: prompt,
+      prompt: String(prompt),
       response: {
         text: textResponse,
         sources: [],
         type: chatMode,
+        attachments,
       },
       include: false,
     });
@@ -151,19 +168,20 @@ async function chatSync({
   // and build system messages based on inputs and history.
   const messages = await LLMConnector.compressMessages({
     systemPrompt: systemPrompt ?? (await chatPrompt(workspace)),
-    userPrompt: prompt,
+    userPrompt: String(prompt),
     contextTexts,
     chatHistory: history,
+    attachments,
   });
 
   // Send the text completion.
-  const { textResponse, metrics } = await LLMConnector.getChatCompletion(
-    messages,
-    {
-      temperature:
-        temperature ?? workspace?.openAiTemp ?? LLMConnector.defaultTemp,
-    }
-  );
+  const { textResponse, metrics: completionMetrics } =
+    await LLMConnector.getChatCompletion(messages);
+  const metrics = addChatCostToMetrics(completionMetrics, {
+    routingMetadata,
+    workspace,
+    connector: LLMConnector,
+  });
 
   if (!textResponse) {
     return formatJSON(
@@ -181,8 +199,14 @@ async function chatSync({
 
   const { chat } = await WorkspaceChats.new({
     workspaceId: workspace.id,
-    prompt: prompt,
-    response: { text: textResponse, sources, type: chatMode, metrics },
+    prompt: String(prompt),
+    response: {
+      text: textResponse,
+      sources,
+      type: chatMode,
+      metrics,
+      attachments,
+    },
   });
 
   return formatJSON(
@@ -205,14 +229,31 @@ async function streamChat({
   systemPrompt = null,
   history = [],
   prompt = null,
+  attachments = [],
   temperature = null,
 }) {
   const uuid = uuidv4();
-  const chatMode = workspace?.chatMode ?? "chat";
-  const LLMConnector = getLLMProvider({
-    provider: workspace?.chatProvider,
-    model: workspace?.chatModel,
-  });
+  const chatMode = workspace?.chatMode ?? "automatic";
+
+  const { connector: LLMConnector, routingMetadata } =
+    await resolveProviderConnector({
+      workspace,
+      prompt,
+      attachments,
+      temperature,
+      chatHistoryOverride: {
+        rawHistory: history,
+        chatHistory: history,
+      },
+      // Do not +1 to this, since OAI message history ends in a user message
+      // and does not need to re-include an uncounted user message.
+      messageCountOverride: history.length,
+    });
+
+  // A disconnected client (aborted request, closed connection) should stop the
+  // provider generating too, not just stop us reading the response.
+  abortConnectorOnClientDisconnect(response, LLMConnector);
+
   const VectorDb = getVectorDbClass();
   const hasVectorizedSpace = await VectorDb.hasNamespace(workspace.slug);
   const embeddingsCount = await VectorDb.namespaceCount(workspace.slug);
@@ -250,6 +291,7 @@ async function streamChat({
         text: textResponse,
         sources: [],
         type: chatMode,
+        attachments,
       },
       include: false,
     });
@@ -300,7 +342,7 @@ async function streamChat({
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
           namespace: workspace.slug,
-          input: prompt,
+          input: String(prompt),
           LLMConnector,
           similarityThreshold: workspace?.similarityThreshold,
           topN: workspace?.topN,
@@ -345,11 +387,12 @@ async function streamChat({
 
     await WorkspaceChats.new({
       workspaceId: workspace.id,
-      prompt: prompt,
+      prompt: String(prompt),
       response: {
         text: textResponse,
         sources: [],
         type: chatMode,
+        attachments,
       },
       include: false,
     });
@@ -375,9 +418,10 @@ async function streamChat({
   // and build system messages based on inputs and history.
   const messages = await LLMConnector.compressMessages({
     systemPrompt: systemPrompt ?? (await chatPrompt(workspace)),
-    userPrompt: prompt,
+    userPrompt: String(prompt),
     contextTexts,
     chatHistory: history,
+    attachments,
   });
 
   if (!LLMConnector.streamingEnabled()) {
@@ -402,10 +446,7 @@ async function streamChat({
     return;
   }
 
-  const stream = await LLMConnector.streamGetChatCompletion(messages, {
-    temperature:
-      temperature ?? workspace?.openAiTemp ?? LLMConnector.defaultTemp,
-  });
+  const stream = await LLMConnector.streamGetChatCompletion(messages);
   const completeText = await LLMConnector.handleStream(
     responseInterceptor,
     stream,
@@ -414,16 +455,22 @@ async function streamChat({
       sources,
     }
   );
+  const metrics = addChatCostToMetrics(stream.metrics, {
+    routingMetadata,
+    workspace,
+    connector: LLMConnector,
+  });
 
   if (completeText?.length > 0) {
     const { chat } = await WorkspaceChats.new({
       workspaceId: workspace.id,
-      prompt: prompt,
+      prompt: String(prompt),
       response: {
         text: completeText,
         sources,
         type: chatMode,
-        metrics: stream.metrics,
+        metrics,
+        attachments,
       },
     });
 
@@ -442,7 +489,7 @@ async function streamChat({
           chunked: true,
           model: workspace.slug,
           finish_reason: "stop",
-          usage: stream.metrics,
+          usage: metrics,
         }
       )
     );
@@ -463,7 +510,7 @@ async function streamChat({
         chunked: true,
         model: workspace.slug,
         finish_reason: "stop",
-        usage: stream.metrics,
+        usage: metrics,
       }
     )
   );

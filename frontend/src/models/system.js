@@ -11,6 +11,7 @@ const System = {
     supportEmail: "anythingllm_support_email",
     customAppName: "anythingllm_custom_app_name",
     canViewChatHistory: "anythingllm_can_view_chat_history",
+    deploymentVersion: "anythingllm_deployment_version",
   },
   ping: async function () {
     return await fetch(`${API_BASE}/ping`)
@@ -31,6 +32,32 @@ const System = {
       .then((res) => res.vectorCount)
       .catch(() => 0);
   },
+
+  /**
+   * Checks if the onboarding is complete.
+   * @returns {Promise<boolean>}
+   */
+  isOnboardingComplete: async function () {
+    return await fetch(`${API_BASE}/onboarding`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Could not find onboarding information.");
+        return res.json();
+      })
+      .then((res) => res.onboardingComplete)
+      .catch(() => false);
+  },
+  /**
+   * Marks the onboarding as complete.
+   * @returns {Promise<boolean>}
+   */
+  markOnboardingComplete: async function () {
+    return await fetch(`${API_BASE}/onboarding`, {
+      method: "POST",
+      headers: baseHeaders(),
+    })
+      .then((res) => res.ok)
+      .catch(() => false);
+  },
   keys: async function () {
     return await fetch(`${API_BASE}/setup-complete`)
       .then((res) => {
@@ -40,16 +67,55 @@ const System = {
       .then((res) => res.results)
       .catch(() => null);
   },
-  localFiles: async function () {
-    return await fetch(`${API_BASE}/system/local-files`, {
-      headers: baseHeaders(),
-    })
+  /**
+   * Without a folderName, returns the folder shells for the picker.
+   * With one, returns that folder's documents.
+   * @param {string|null} folderName
+   * @param {number} offset
+   * @param {number|"all"} limit - "all" opts out of paging entirely; the
+   * server otherwise clamps this to its own maximum page size.
+   */
+  localFiles: async function (folderName = null, offset = 0, limit = 100) {
+    const params = new URLSearchParams();
+    if (folderName) {
+      params.set("folder", folderName);
+      params.set("offset", String(offset));
+      params.set("limit", String(limit));
+    }
+    const qs = params.toString();
+    const url = `${API_BASE}/system/local-files${qs ? `?${qs}` : ""}`;
+    return await fetch(url, { headers: baseHeaders() })
       .then((res) => {
-        if (!res.ok) throw new Error("Could not find setup information.");
+        if (!res.ok) throw new Error("Could not fetch local files.");
         return res.json();
       })
-      .then((res) => res.localFiles)
+      .then((res) => (folderName ? res : res.localFiles))
       .catch(() => null);
+  },
+  searchLocalFiles: async function (query = "") {
+    return await fetch(
+      `${API_BASE}/system/local-files/search?q=${encodeURIComponent(query)}`,
+      { headers: baseHeaders() }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error("Search failed.");
+        return res.json();
+      })
+      .then((res) => res.results)
+      .catch(() => []);
+  },
+  getDocumentsByDocPaths: async function (docpaths = []) {
+    return await fetch(`${API_BASE}/system/local-files/by-docpaths`, {
+      method: "POST",
+      headers: baseHeaders(),
+      body: JSON.stringify({ docpaths }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch documents by paths.");
+        return res.json();
+      })
+      .then((res) => res.documents)
+      .catch(() => []);
   },
   needsAuthCheck: function () {
     const lastAuthCheck = window.localStorage.getItem(AUTH_TIMESTAMP);
@@ -80,6 +146,22 @@ const System = {
       .then((res) => res)
       .catch((e) => {
         return { valid: false, message: e.message };
+      });
+  },
+  /**
+   * Refreshes the user object from the session.
+   * @returns {Promise<{success: boolean, user: Object | null, message: string | null}>}
+   */
+  refreshUser: () => {
+    return fetch(`${API_BASE}/system/refresh-user`, {
+      headers: baseHeaders(),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Could not refresh user.");
+        return res.json();
+      })
+      .catch((e) => {
+        return { success: false, user: null, message: e.message };
       });
   },
   recoverAccount: async function (username, recoveryCodes) {
@@ -345,11 +427,44 @@ const System = {
     );
     return { appName: customAppName, error: null };
   },
+  /**
+   * Fetches the default system prompt from the server.
+   * @returns {Promise<{defaultSystemPrompt: string, saneDefaultSystemPrompt: string}>}
+   */
+  fetchDefaultSystemPrompt: async function () {
+    return await fetch(`${API_BASE}/system/default-system-prompt`, {
+      method: "GET",
+      headers: baseHeaders(),
+    })
+      .then((res) => res.json())
+      .then((res) => ({
+        defaultSystemPrompt: res.defaultSystemPrompt,
+        saneDefaultSystemPrompt: res.saneDefaultSystemPrompt,
+      }))
+      .catch((e) => {
+        console.error(e);
+        return { defaultSystemPrompt: "", saneDefaultSystemPrompt: "" };
+      });
+  },
+  updateDefaultSystemPrompt: async function (defaultSystemPrompt) {
+    try {
+      const res = await fetch(`${API_BASE}/system/default-system-prompt`, {
+        method: "POST",
+        headers: baseHeaders(),
+        body: JSON.stringify({ defaultSystemPrompt }),
+      });
+      const data = await res.json();
+      return data;
+    } catch (e) {
+      console.error(e);
+      return { success: false, message: e.message };
+    }
+  },
   fetchLogo: async function () {
     const url = new URL(`${fullApiUrl()}/system/logo`);
     url.searchParams.append(
       "theme",
-      localStorage.getItem("theme") || "default"
+      document.documentElement.getAttribute("data-theme") || "dark"
     );
 
     return await fetch(url, {
@@ -381,12 +496,11 @@ const System = {
         throw new Error("Failed to fetch pfp.");
       })
       .then((blob) => (blob ? URL.createObjectURL(blob) : null))
-      .catch((e) => {
-        // console.log(e);
+      .catch(() => {
         return null;
       });
   },
-  removePfp: async function (id) {
+  removePfp: async function () {
     return await fetch(`${API_BASE}/system/remove-pfp`, {
       method: "DELETE",
       headers: baseHeaders(),
@@ -429,39 +543,6 @@ const System = {
         return { success: false, error: e.message };
       });
   },
-  getWelcomeMessages: async function () {
-    return await fetch(`${API_BASE}/system/welcome-messages`, {
-      method: "GET",
-      cache: "no-cache",
-      headers: baseHeaders(),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Could not fetch welcome messages.");
-        return res.json();
-      })
-      .then((res) => res.welcomeMessages)
-      .catch((e) => {
-        console.error(e);
-        return null;
-      });
-  },
-  setWelcomeMessages: async function (messages) {
-    return fetch(`${API_BASE}/system/set-welcome-messages`, {
-      method: "POST",
-      headers: baseHeaders(),
-      body: JSON.stringify({ messages }),
-    })
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(res.statusText || "Error setting welcome messages.");
-        }
-        return { success: true, ...res.json() };
-      })
-      .catch((e) => {
-        console.error(e);
-        return { success: false, error: e.message };
-      });
-  },
   getApiKeys: async function () {
     return fetch(`${API_BASE}/system/api-keys`, {
       method: "GET",
@@ -478,10 +559,11 @@ const System = {
         return { apiKey: null, error: e.message };
       });
   },
-  generateApiKey: async function () {
+  generateApiKey: async function (data = {}) {
     return fetch(`${API_BASE}/system/generate-api-key`, {
       method: "POST",
       headers: baseHeaders(),
+      body: JSON.stringify(data),
     })
       .then((res) => {
         if (!res.ok) {
@@ -509,7 +591,8 @@ const System = {
     provider,
     apiKey = null,
     basePath = null,
-    timeout = null
+    timeout = null,
+    options = {}
   ) {
     const controller = new AbortController();
     if (!!timeout) {
@@ -526,6 +609,7 @@ const System = {
         provider,
         apiKey,
         basePath,
+        options: options || {},
       }),
     })
       .then((res) => {
@@ -740,6 +824,124 @@ const System = {
         console.error(e);
         return { valid: false, user: null, token: null, message: e.message };
       });
+  },
+
+  /**
+   * Fetches the app version from the server.
+   * @returns {Promise<string | null>} The app version.
+   */
+  fetchAppVersion: async function () {
+    const cache = window.localStorage.getItem(this.cacheKeys.deploymentVersion);
+    const { version, lastFetched } = cache
+      ? safeJsonParse(cache, { version: null, lastFetched: 0 })
+      : { version: null, lastFetched: 0 };
+
+    if (!!version && Date.now() - lastFetched < 3_600_000) return version;
+    const newVersion = await fetch(`${API_BASE}/utils/metrics`, {
+      method: "GET",
+      cache: "no-cache",
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Could not fetch app version.");
+        return res.json();
+      })
+      .then((res) => res?.appVersion)
+      .catch(() => null);
+
+    if (!newVersion) return null;
+    window.localStorage.setItem(
+      this.cacheKeys.deploymentVersion,
+      JSON.stringify({ version: newVersion, lastFetched: Date.now() })
+    );
+    return newVersion;
+  },
+
+  /**
+   * Validates a SQL connection string.
+   * @param {'postgresql'|'mysql'|'sql-server'} engine - the database engine identifier
+   * @param {string} connectionString - the connection string to validate
+   * @returns {Promise<{success: boolean, error: string | null}>}
+   */
+  validateSQLConnection: async function (engine, connectionString) {
+    return fetch(`${API_BASE}/system/validate-sql-connection`, {
+      method: "POST",
+      headers: baseHeaders(),
+      body: JSON.stringify({ engine, connectionString }),
+    })
+      .then((res) => res.json())
+      .catch((e) => {
+        console.error("Failed to validate SQL connection:", e);
+        return { success: false, error: e.message };
+      });
+  },
+
+  /**
+   * Checks if the filesystem-agent skill is available.
+   * The filesystem-agent skill is only available when running in a Docker container.
+   * @returns {Promise<boolean>}
+   */
+  isFileSystemAgentAvailable: async function () {
+    return fetch(`${API_BASE}/agent-skills/filesystem-agent/is-available`, {
+      method: "GET",
+      headers: baseHeaders(),
+    })
+      .then((res) => res.json())
+      .then((res) => res?.available ?? false)
+      .catch(() => false);
+  },
+
+  /**
+   * Checks if the create-files-agent skill is available.
+   * The create-files-agent skill is only available when running in a Docker container.
+   * @returns {Promise<boolean>}
+   */
+  isCreateFilesAgentAvailable: async function () {
+    return fetch(`${API_BASE}/agent-skills/create-files-agent/is-available`, {
+      method: "GET",
+      headers: baseHeaders(),
+    })
+      .then((res) => res.json())
+      .then((res) => res?.available ?? false)
+      .catch(() => false);
+  },
+
+  /**
+   * Checks if image generation is available.
+   * Image generation is only available when an image generation provider is configured.
+   * @returns {Promise<boolean>}
+   */
+  isImageGenerationAvailable: async function () {
+    return fetch(`${API_BASE}/agent-skills/image-generation/is-available`, {
+      method: "GET",
+      headers: baseHeaders(),
+    })
+      .then((res) => res.json())
+      .then((res) => res?.available ?? false)
+      .catch(() => false);
+  },
+
+  /**
+   * Send a recorded audio blob to the configured server-side STT provider
+   * for transcription. Returns the transcribed text or an error string.
+   * @param {Blob} audioBlob - Recorded audio (e.g., audio/webm) to transcribe.
+   * @param {string} [filename] - Filename hint for the upload.
+   * @returns {Promise<{text: string|null, error: string|null}>}
+   */
+  transcribeAudio: async function (audioBlob, filename = "audio.webm") {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, filename);
+    return fetch(`${API_BASE}/system/transcribe-audio`, {
+      method: "POST",
+      headers: baseHeaders(),
+      body: formData,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok)
+          throw new Error(json?.error || "Failed to transcribe audio.");
+        return { text: json?.text ?? "", error: null };
+      })
+      .catch((e) => ({ text: null, error: e.message }));
   },
 
   experimentalFeatures: {

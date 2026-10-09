@@ -6,6 +6,9 @@ const {
   handleDefaultStreamResponseV2,
   formatChatHistory,
 } = require("../../helpers/chat/responses");
+const {
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
 
 class LiteLLM {
   constructor(embedder = null, modelPreference = null) {
@@ -15,13 +18,14 @@ class LiteLLM {
         "LiteLLM must have a valid base path to use for the api."
       );
 
+    this.className = "LiteLLM";
     this.basePath = process.env.LITE_LLM_BASE_PATH;
     this.openai = new OpenAIApi({
       baseURL: this.basePath,
       apiKey: process.env.LITE_LLM_API_KEY ?? null,
     });
     this.model = modelPreference ?? process.env.LITE_LLM_MODEL_PREF ?? null;
-    this.maxTokens = process.env.LITE_LLM_MODEL_TOKEN_LIMIT ?? 1024;
+
     if (!this.model) throw new Error("LiteLLM must have a valid model set.");
     this.limits = {
       history: this.promptWindowLimit() * 0.15,
@@ -30,12 +34,11 @@ class LiteLLM {
     };
 
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
     this.log(`Inference API: ${this.basePath} Model: ${this.model}`);
   }
 
   log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   #appendContext(contextTexts = []) {
@@ -124,14 +127,16 @@ class LiteLLM {
     ];
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
       this.openai.chat.completions
         .create({
           model: this.model,
           messages,
-          temperature,
-          max_tokens: parseInt(this.maxTokens), // LiteLLM requires int
+          ...temperatureParam(temperature),
         })
         .catch((e) => {
           throw new Error(e.message);
@@ -153,23 +158,29 @@ class LiteLLM {
         outputTps:
           (result.output.usage?.completion_tokens || 0) / result.duration,
         duration: result.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.openai.chat.completions.create({
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: this.openai.chat.completions.create({
         model: this.model,
         stream: true,
         messages,
-        temperature,
-        max_tokens: parseInt(this.maxTokens), // LiteLLM requires int
+        ...temperatureParam(temperature),
       }),
-      messages
-      // runPromptTokenCalculation: true - We manually count the tokens because they may or may not be provided in the stream
-      // responses depending on LLM connected. If they are provided, then we counted for nothing, but better than nothing.
-    );
+      messages,
+      runPromptTokenCalculation: true,
+      modelTag: this.model,
+      provider: this.className,
+    });
 
     return measuredStreamRequest;
   }

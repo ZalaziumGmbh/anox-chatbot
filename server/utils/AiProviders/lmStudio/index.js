@@ -6,17 +6,29 @@ const {
 const {
   LLMPerformanceMonitor,
 } = require("../../helpers/chat/LLMPerformanceMonitor");
+const { OpenAI: OpenAIApi } = require("openai");
+const {
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
+const {
+  PROVIDER_REASONING_EFFORTS,
+  reasoningParams,
+} = require("../../helpers/reasoningEffort");
 
 //  hybrid of openAi LLM chat completion for LMStudio
 class LMStudioLLM {
+  /** @see LMStudioLLM.cacheContextWindows */
+  static modelContextWindows = {};
+
   constructor(embedder = null, modelPreference = null) {
     if (!process.env.LMSTUDIO_BASE_PATH)
       throw new Error("No LMStudio API Base Path was set.");
 
-    const { OpenAI: OpenAIApi } = require("openai");
+    this.className = "LMStudioLLM";
+    const apiKey = process.env.LMSTUDIO_AUTH_TOKEN ?? null;
     this.lmstudio = new OpenAIApi({
       baseURL: parseLMStudioBasePath(process.env.LMSTUDIO_BASE_PATH), // here is the URL to your LMStudio instance
-      apiKey: null,
+      apiKey,
     });
 
     // Prior to LMStudio 0.2.17 the `model` param was not required and you could pass anything
@@ -25,18 +37,84 @@ class LMStudioLLM {
     // and any other value will crash inferencing. So until this is patched we will
     // try to fetch the `/models` and have the user set it, or just fallback to "Loaded from Chat UI"
     // which will not impact users with <v0.2.17 and should work as well once the bug is fixed.
-    this.model =
-      modelPreference ||
-      process.env.LMSTUDIO_MODEL_PREF ||
-      "Loaded from Chat UI";
+    this.model = modelPreference || process.env.LMSTUDIO_MODEL_PREF;
+    if (!this.model) throw new Error("LMStudio must have a valid model set.");
+
+    this.embedder = embedder ?? new NativeEmbedder();
+
+    // Lazy load the limits to avoid blocking the main thread on cacheContextWindows
+    this.limits = null;
+
+    LMStudioLLM.cacheContextWindows(true);
+    this.#log(`initialized with model: ${this.model}`);
+  }
+
+  #log(text, ...args) {
+    console.log(`\x1b[32m[LMStudio]\x1b[0m ${text}`, ...args);
+  }
+
+  static #slog(text, ...args) {
+    console.log(`\x1b[32m[LMStudio]\x1b[0m ${text}`, ...args);
+  }
+
+  async assertModelContextLimits() {
+    if (this.limits !== null) return;
+    await LMStudioLLM.cacheContextWindows();
     this.limits = {
       history: this.promptWindowLimit() * 0.15,
       system: this.promptWindowLimit() * 0.15,
       user: this.promptWindowLimit() * 0.7,
     };
+  }
 
-    this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
+  /**
+   * Cache the context windows for the LMStudio models.
+   * This is done once and then cached for the lifetime of the server. This is absolutely necessary to ensure that the context windows are correct.
+   *
+   * This is a convenience to ensure that the context windows are correct and that the user
+   * does not have to manually set the context window for each model.
+   * @param {boolean} force - Force the cache to be refreshed.
+   * @returns {Promise<void>} - A promise that resolves when the cache is refreshed.
+   */
+  static async cacheContextWindows(force = false) {
+    try {
+      // Skip if we already have cached context windows and we're not forcing a refresh
+      if (Object.keys(LMStudioLLM.modelContextWindows).length > 0 && !force)
+        return;
+
+      const apiKey = process.env.LMSTUDIO_AUTH_TOKEN ?? null;
+      const endpoint = new URL(
+        parseLMStudioBasePath(process.env.LMSTUDIO_BASE_PATH)
+      );
+      endpoint.pathname = "/api/v0/models";
+      await fetch(endpoint.toString(), {
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+      })
+        .then((res) => {
+          if (!res.ok)
+            throw new Error(`LMStudio:cacheContextWindows - ${res.statusText}`);
+          return res.json();
+        })
+        .then(({ data: models }) => {
+          models.forEach((model) => {
+            if (model.type === "embeddings") return;
+            LMStudioLLM.modelContextWindows[model.id] =
+              model.max_context_length;
+          });
+        })
+        .catch((e) => {
+          LMStudioLLM.#slog(`Error caching context windows`, e);
+          return;
+        });
+
+      LMStudioLLM.#slog(`Context windows cached for all models!`);
+    } catch (e) {
+      LMStudioLLM.#slog(`Error caching context windows`, e);
+      return;
+    }
   }
 
   #appendContext(contextTexts = []) {
@@ -55,20 +133,34 @@ class LMStudioLLM {
     return "streamGetChatCompletion" in this;
   }
 
-  static promptWindowLimit(_modelName) {
-    const limit = process.env.LMSTUDIO_MODEL_TOKEN_LIMIT || 4096;
-    if (!limit || isNaN(Number(limit)))
-      throw new Error("No LMStudio token context limit was set.");
-    return Number(limit);
+  static promptWindowLimit(modelName) {
+    if (Object.keys(LMStudioLLM.modelContextWindows).length === 0) {
+      this.#slog(
+        "No context windows cached - Context window may be inaccurately reported."
+      );
+      return process.env.LMSTUDIO_MODEL_TOKEN_LIMIT || 16384;
+    }
+
+    let userDefinedLimit = null;
+    const systemDefinedLimit =
+      Number(this.modelContextWindows[modelName]) || 16384;
+
+    if (
+      process.env.LMSTUDIO_MODEL_TOKEN_LIMIT &&
+      !isNaN(Number(process.env.LMSTUDIO_MODEL_TOKEN_LIMIT)) &&
+      Number(process.env.LMSTUDIO_MODEL_TOKEN_LIMIT) > 0
+    )
+      userDefinedLimit = Number(process.env.LMSTUDIO_MODEL_TOKEN_LIMIT);
+
+    // The user defined limit is always higher priority than the context window limit, but it cannot be higher than the context window limit
+    // so we return the minimum of the two, if there is no user defined limit, we return the system defined limit as-is.
+    if (userDefinedLimit !== null)
+      return Math.min(userDefinedLimit, systemDefinedLimit);
+    return systemDefinedLimit;
   }
 
-  // Ensure the user set a value for the token limit
-  // and if undefined - assume 4096 window.
   promptWindowLimit() {
-    const limit = process.env.LMSTUDIO_MODEL_TOKEN_LIMIT || 4096;
-    if (!limit || isNaN(Number(limit)))
-      throw new Error("No LMStudio token context limit was set.");
-    return Number(limit);
+    return this.constructor.promptWindowLimit(this.model);
   }
 
   async isValidChatCompletionModel(_ = "") {
@@ -126,7 +218,26 @@ class LMStudioLLM {
     ];
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
+  /**
+   * Parses and prepends reasoning from the response and returns the full text response.
+   * Used for getChatCompletions to render thinking text if present in full response.
+   * @param {Object} message - The message object from the LMStudio response.
+   * @returns {string}
+   */
+  #parseReasoningFromResponse({ message }) {
+    let textResponse = message?.content ?? "";
+    if (
+      !!message?.reasoning_content &&
+      message.reasoning_content.trim().length > 0
+    )
+      textResponse = `<think>${message.reasoning_content}</think>${textResponse}`;
+    return textResponse;
+  }
+
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature, reasoningEffort = null } = {}
+  ) {
     if (!this.model)
       throw new Error(
         `LMStudio chat: ${this.model} is not valid or defined model for chat completion!`
@@ -136,7 +247,8 @@ class LMStudioLLM {
       this.lmstudio.chat.completions.create({
         model: this.model,
         messages,
-        temperature,
+        ...temperatureParam(temperature),
+        ...reasoningParams("lmstudio", reasoningEffort, this.model),
       })
     );
 
@@ -147,37 +259,127 @@ class LMStudioLLM {
       return null;
 
     return {
-      textResponse: result.output.choices[0].message.content,
+      textResponse: this.#parseReasoningFromResponse(result.output.choices[0]),
       metrics: {
         prompt_tokens: result.output.usage?.prompt_tokens || 0,
         completion_tokens: result.output.usage?.completion_tokens || 0,
         total_tokens: result.output.usage?.total_tokens || 0,
         outputTps: result.output.usage?.completion_tokens / result.duration,
         duration: result.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature, reasoningEffort = null } = {}
+  ) {
     if (!this.model)
       throw new Error(
         `LMStudio chat: ${this.model} is not valid or defined model for chat completion!`
       );
 
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.lmstudio.chat.completions.create({
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: this.lmstudio.chat.completions.create({
         model: this.model,
         stream: true,
         messages,
-        temperature,
+        ...temperatureParam(temperature),
+        ...reasoningParams("lmstudio", reasoningEffort, this.model),
       }),
-      messages
-    );
+      messages,
+      runPromptTokenCalculation: true,
+      modelTag: this.model,
+      provider: this.className,
+    });
     return measuredStreamRequest;
   }
 
   handleStream(response, stream, responseProps) {
     return handleDefaultStreamResponseV2(response, stream, responseProps);
+  }
+
+  /**
+   * Fetches a model's entry from the /api/v1/models endpoint.
+   * @param {string} model - The model key to look up
+   * @returns {Promise<object>} The model info, or an empty object if not found.
+   */
+  static async #getModelInfo(model) {
+    const endpoint = new URL(
+      parseLMStudioBasePath(process.env.LMSTUDIO_BASE_PATH, "v1")
+    );
+    const apiKey = process.env.LMSTUDIO_AUTH_TOKEN ?? null;
+    endpoint.pathname += "/models";
+    return (
+      (await fetch(endpoint.toString(), {
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        },
+      })
+        .then((res) => {
+          if (!res.ok)
+            throw new Error(`LMStudio:getModelInfo - ${res.statusText}`);
+          return res.json();
+        })
+        .then(({ models = [] }) => models.find((m) => m.key === model))) || {}
+    );
+  }
+
+  /**
+   * Whether the model currently has an instance loaded into memory.
+   * Resolves true on error so a dead server fails on the real completion instead.
+   * @param {string} model - The model key to check
+   * @returns {Promise<boolean>}
+   */
+  static async isModelLoaded(model) {
+    return await LMStudioLLM.#getModelInfo(model)
+      .then((info) => (info.loaded_instances ?? []).length > 0)
+      .catch(() => true);
+  }
+
+  /**
+   * Returns the capabilities of the model.
+   * This uses the new /api/v1 endpoint, which returns the model info in a different format.
+   * @returns {Promise<{tools: 'unknown' | boolean, reasoning: 'unknown' | boolean, reasoningOptions: string[], imageGeneration: 'unknown' | boolean, vision: 'unknown' | boolean}>}
+   */
+  async getModelCapabilities() {
+    try {
+      const modelInfo = await LMStudioLLM.#getModelInfo(this.model);
+
+      const capabilities = modelInfo.hasOwnProperty("capabilities")
+        ? modelInfo.capabilities
+        : {
+            trained_for_tool_use: "unknown",
+            vision: "unknown",
+          };
+
+      // `reasoning.allowed_options` is per model (eg: on/off for Qwen3, or
+      // low/medium/high for gpt-oss).
+      const reasoningOptions = PROVIDER_REASONING_EFFORTS.lmstudio().filter(
+        (option) => capabilities.reasoning?.allowed_options?.includes(option)
+      );
+
+      return {
+        tools: capabilities.trained_for_tool_use,
+        reasoning: capabilities.hasOwnProperty("reasoning"),
+        reasoningOptions,
+        imageGeneration: "unknown", // LM Studio does not support image generation yet.
+        vision: capabilities.vision,
+      };
+    } catch (error) {
+      console.error("Error getting model capabilities:", error);
+      return {
+        tools: "unknown",
+        reasoning: "unknown",
+        reasoningOptions: [],
+        imageGeneration: "unknown",
+        vision: "unknown",
+      };
+    }
   }
 
   // Simple wrapper for dynamic embedder & normalize interface for all LLM implementations
@@ -189,6 +391,7 @@ class LMStudioLLM {
   }
 
   async compressMessages(promptArgs = {}, rawHistory = []) {
+    await this.assertModelContextLimits();
     const { messageArrayCompressor } = require("../../helpers/chat");
     const messageArray = this.constructPrompt(promptArgs);
     return await messageArrayCompressor(this, messageArray, rawHistory);
@@ -199,14 +402,17 @@ class LMStudioLLM {
  * Parse the base path for the LMStudio API. Since the base path must end in /v1 and cannot have a trailing slash,
  * and the user can possibly set it to anything and likely incorrectly due to pasting behaviors, we need to ensure it is in the correct format.
  * @param {string} basePath
+ * @param {'legacy' | 'v1'} apiVersion
  * @returns {string}
  */
-function parseLMStudioBasePath(providedBasePath = "") {
+function parseLMStudioBasePath(providedBasePath = "", apiVersion = "legacy") {
   try {
     const baseURL = new URL(providedBasePath);
-    const basePath = `${baseURL.origin}/v1`;
+    let basePath = `${baseURL.origin}`;
+    if (apiVersion === "legacy") basePath += `/v1`;
+    if (apiVersion === "v1") basePath += `/api/v1`;
     return basePath;
-  } catch (e) {
+  } catch {
     return providedBasePath;
   }
 }

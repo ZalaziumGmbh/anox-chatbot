@@ -11,6 +11,7 @@ import {
   BracketsCurly,
 } from "@phosphor-icons/react";
 import { Tooltip } from "react-tooltip";
+import Toggle from "@/components/lib/Toggle";
 import StartNode from "../nodes/StartNode";
 import ApiCallNode from "../nodes/ApiCallNode";
 import WebsiteNode from "../nodes/WebsiteNode";
@@ -65,6 +66,7 @@ const BLOCK_INFO = {
       body: "",
       formData: [],
       responseVariable: "",
+      directOutput: false,
     },
     getSummary: (config) =>
       `${config.method || "GET"} ${config.url || "(no URL)"}`,
@@ -115,8 +117,8 @@ const BLOCK_INFO = {
     description: "Process data using LLM instructions",
     defaultConfig: {
       instruction: "",
-      inputVariable: "",
       resultVariable: "",
+      directOutput: false,
     },
     getSummary: (config) => config.instruction || "No instruction",
   },
@@ -129,6 +131,7 @@ const BLOCK_INFO = {
       captureAs: "text",
       querySelector: "",
       resultVariable: "",
+      directOutput: false,
     },
     getSummary: (config) => config.url || "No URL specified",
   },
@@ -153,6 +156,7 @@ export default function BlockList({
   refs,
 }) {
   const renderBlockConfig = (block) => {
+    const isLastConfigurableBlock = blocks[blocks.length - 2]?.id === block.id;
     const props = {
       config: block.config,
       onConfigChange: (config) => updateBlockConfig(block.id, config),
@@ -160,6 +164,38 @@ export default function BlockList({
       onDeleteVariable,
     };
 
+    // Direct output switch to the last configurable block before finish
+    if (
+      isLastConfigurableBlock &&
+      block.type !== BLOCK_TYPES.START &&
+      block.type !== BLOCK_TYPES.FLOW_INFO
+    ) {
+      return (
+        <div className="space-y-4">
+          {renderBlockConfigContent(block, props)}
+          <div className="pt-4 border-t border-white/10">
+            <Toggle
+              size="md"
+              variant="horizontal"
+              label="Direct Output"
+              description="The output of this block will be returned directly to the chat. This will prevent any further tool calls from being executed."
+              enabled={props.config.directOutput || false}
+              onChange={(checked) =>
+                props.onConfigChange({
+                  ...props.config,
+                  directOutput: checked,
+                })
+              }
+            />
+          </div>
+        </div>
+      );
+    }
+
+    return renderBlockConfigContent(block, props);
+  };
+
+  const renderBlockConfigContent = (block, props) => {
     switch (block.type) {
       case BLOCK_TYPES.FLOW_INFO:
         return <FlowInfoNode {...props} ref={refs} />;

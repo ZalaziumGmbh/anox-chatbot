@@ -46,6 +46,7 @@
     "royalblue",
     "SearchApi",
     "searxng",
+    "SerpApi",
     "Serper",
     "Serply",
     "streamable",
@@ -59,5 +60,7 @@
     "Zilliz"
   ],
   "eslint.experimental.useFlatConfig": true,
-  "docker.languageserver.formatter.ignoreMultilineInstructions": true
+  "docker.languageserver.formatter.ignoreMultilineInstructions": true,
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode"
 }

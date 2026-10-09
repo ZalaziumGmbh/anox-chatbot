@@ -127,6 +127,71 @@ function extensionEndpoints(app) {
       }
     }
   );
+  app.post(
+    "/ext/drupalwiki",
+    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
+    async (request, response) => {
+      try {
+        const responseFromProcessor =
+          await new CollectorApi().forwardExtensionRequest({
+            endpoint: "/ext/drupalwiki",
+            method: "POST",
+            body: request.body,
+          });
+        await Telemetry.sendTelemetry("extension_invoked", {
+          type: "drupalwiki",
+        });
+        response.status(200).json(responseFromProcessor);
+      } catch (e) {
+        console.error(e);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.post(
+    "/ext/obsidian/vault",
+    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
+    async (request, response) => {
+      try {
+        const responseFromProcessor =
+          await new CollectorApi().forwardExtensionRequest({
+            endpoint: "/ext/obsidian/vault",
+            method: "POST",
+            body: request.body,
+          });
+        await Telemetry.sendTelemetry("extension_invoked", {
+          type: "obsidian_vault",
+        });
+        response.status(200).json(responseFromProcessor);
+      } catch (e) {
+        console.error(e);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.post(
+    "/ext/paperless-ngx",
+    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
+    async (request, response) => {
+      try {
+        const responseFromProcessor =
+          await new CollectorApi().forwardExtensionRequest({
+            endpoint: "/ext/paperless-ngx",
+            method: "POST",
+            body: request.body,
+          });
+        await Telemetry.sendTelemetry("extension_invoked", {
+          type: "paperless_ngx",
+        });
+        response.status(200).json(responseFromProcessor);
+      } catch (e) {
+        console.error(e);
+        response.sendStatus(500).end();
+      }
+    }
+  );
 }
 
 module.exports = { extensionEndpoints };

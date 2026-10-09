@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Tooltip } from "react-tooltip";
+import { v4 } from "uuid";
 
 import BlockList, { BLOCK_TYPES, BLOCK_INFO } from "./BlockList";
 import AddBlockMenu from "./AddBlockMenu";
@@ -8,6 +10,8 @@ import AgentFlows from "@/models/agentFlows";
 import { useTheme } from "@/hooks/useTheme";
 import HeaderMenu from "./HeaderMenu";
 import paths from "@/utils/paths";
+import PublishEntityModal from "@/components/CommunityHub/PublishEntityModal";
+import { AvailableVariablesProvider } from "./useAvailableVariables";
 
 const DEFAULT_BLOCKS = [
   {
@@ -23,7 +27,7 @@ const DEFAULT_BLOCKS = [
     id: "start",
     type: BLOCK_TYPES.START,
     config: {
-      variables: [{ name: "", value: "" }],
+      variables: [{ name: "", value: "", type: "optional", description: "" }],
     },
     isExpanded: true,
   },
@@ -46,11 +50,10 @@ export default function AgentBuilder() {
   const [blocks, setBlocks] = useState(DEFAULT_BLOCKS);
   const [selectedBlock, setSelectedBlock] = useState("start");
   const [showBlockMenu, setShowBlockMenu] = useState(false);
-  const [showLoadMenu, setShowLoadMenu] = useState(false);
   const [availableFlows, setAvailableFlows] = useState([]);
-  const [selectedFlowForDetails, setSelectedFlowForDetails] = useState(null);
   const nameRef = useRef(null);
   const descriptionRef = useRef(null);
+  const [showPublishModal, setShowPublishModal] = useState(false);
 
   useEffect(() => {
     loadAvailableFlows();
@@ -119,7 +122,6 @@ export default function AgentBuilder() {
       setActive(flow.config.active ?? true);
       setCurrentFlowUuid(flow.uuid);
       setBlocks(flowBlocks);
-      setShowLoadMenu(false);
     } catch (error) {
       console.error(error);
       showToast("Failed to load flow", "error", { clear: true });
@@ -128,7 +130,7 @@ export default function AgentBuilder() {
 
   const addBlock = (type) => {
     const newBlock = {
-      id: `block_${blocks.length}`,
+      id: `block_${v4()}`,
       type,
       config: { ...BLOCK_INFO[type].defaultConfig },
       isExpanded: true,
@@ -223,7 +225,9 @@ export default function AgentBuilder() {
       await loadAvailableFlows();
     } catch (error) {
       console.error("Save error details:", error);
-      showToast("Failed to save agent flow", "error", { clear: true });
+      showToast(`Failed to save agent flow. ${error.message}`, "error", {
+        clear: true,
+      });
     }
   };
 
@@ -288,18 +292,6 @@ export default function AgentBuilder() {
     });
   };
 
-  // const runFlow = async (uuid) => {
-  //   try {
-  //     const { success, error, _results } = await AgentFlows.runFlow(uuid);
-  //     if (!success) throw new Error(error);
-
-  //     showToast("Flow executed successfully!", "success", { clear: true });
-  //   } catch (error) {
-  //     console.error(error);
-  //     showToast("Failed to run agent flow", "error", { clear: true });
-  //   }
-  // };
-
   const clearFlow = () => {
     if (!!flowId) navigate(paths.agents.builder());
     setAgentName("");
@@ -316,27 +308,55 @@ export default function AgentBuilder() {
     setBlocks(newBlocks);
   };
 
+  const handlePublishFlow = () => {
+    setShowPublishModal(true);
+  };
+
+  const flowInfoBlock = blocks.find(
+    (block) => block.type === BLOCK_TYPES.FLOW_INFO
+  );
+  const flowEntity = {
+    name: flowInfoBlock?.config?.name || "",
+    description: flowInfoBlock?.config?.description || "",
+    steps: blocks
+      .filter(
+        (block) =>
+          block.type !== BLOCK_TYPES.FINISH &&
+          block.type !== BLOCK_TYPES.FLOW_INFO
+      )
+      .map((block) => ({ type: block.type, config: block.config })),
+  };
+
   return (
-    <div
-      style={{
-        backgroundImage:
-          theme === "light"
-            ? "radial-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 0)"
-            : "radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 0)",
-        backgroundSize: "15px 15px",
-        backgroundPosition: "-7.5px -7.5px",
-      }}
-      className="w-full h-screen flex bg-theme-bg-primary"
-    >
-      <div className="w-full flex flex-col">
+    <AvailableVariablesProvider blocks={blocks}>
+      <div
+        style={{
+          backgroundImage:
+            theme === "light"
+              ? "radial-gradient(rgba(0, 0, 0, 0.1) 1px, transparent 0)"
+              : "radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 0)",
+          backgroundSize: "15px 15px",
+          backgroundPosition: "-7.5px -7.5px",
+        }}
+        className="relative w-screen h-screen flex flex-col bg-theme-bg-primary overflow-clip"
+      >
+        <PublishEntityModal
+          show={showPublishModal}
+          onClose={() => setShowPublishModal(false)}
+          entityType="agent-flow"
+          entity={flowEntity}
+        />
         <HeaderMenu
           agentName={agentName}
           availableFlows={availableFlows}
           onNewFlow={clearFlow}
           onSaveFlow={saveFlow}
+          onPublishFlow={handlePublishFlow}
         />
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="max-w-xl mx-auto mt-14">
+        <div className="flex-1 min-h-0 p-6 overflow-y-auto">
+          <div
+            className={`max-w-xl mx-auto mt-14 ${showBlockMenu ? "pb-52" : ""}`}
+          >
             <BlockList
               blocks={blocks}
               updateBlockConfig={updateBlockConfig}
@@ -349,13 +369,29 @@ export default function AgentBuilder() {
             />
 
             <AddBlockMenu
+              blocks={blocks}
               showBlockMenu={showBlockMenu}
               setShowBlockMenu={setShowBlockMenu}
               addBlock={addBlock}
             />
           </div>
         </div>
+        <Tooltip
+          id="content-summarization-tooltip"
+          place="top"
+          delayShow={300}
+          className="tooltip !text-xs z-99"
+        >
+          <p className="text-sm">
+            When enabled, long webpage content will be automatically summarized
+            to reduce token usage.
+            <br />
+            <br />
+            Note: This may affect data quality and remove specific details from
+            the original content.
+          </p>
+        </Tooltip>
       </div>
-    </div>
+    </AvailableVariablesProvider>
   );
 }

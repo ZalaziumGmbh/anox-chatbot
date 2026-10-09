@@ -2,9 +2,15 @@ const path = require("path");
 const fs = require("fs");
 
 class NativeEmbeddingReranker {
+  // Memory per model call scales with batch size, and onnxruntime-node never
+  // returns it to the OS - so the largest batch we ever run sets process RSS
+  // for the life of the app. Callers pass as many documents as they like.
+  static maxBatchSize = 10;
+
   static #model = null;
   static #tokenizer = null;
   static #transformers = null;
+  static #initializationPromise = null;
 
   // This is a folder that Mintplex Labs hosts for those who cannot capture the HF model download
   // endpoint for various reasons. This endpoint is not guaranteed to be active or maintained
@@ -43,7 +49,7 @@ class NativeEmbeddingReranker {
     if (!NativeEmbeddingReranker.#transformers) return "https://huggingface.co";
     try {
       return new URL(NativeEmbeddingReranker.#transformers.env.remoteHost).host;
-    } catch (e) {
+    } catch {
       return this.#fallbackHost;
     }
   }
@@ -71,13 +77,25 @@ class NativeEmbeddingReranker {
   }
 
   async initClient() {
-    if (NativeEmbeddingReranker.#transformers) {
-      this.log(`Reranker suite already initialized - reusing.`);
+    if (
+      NativeEmbeddingReranker.#transformers &&
+      NativeEmbeddingReranker.#model &&
+      NativeEmbeddingReranker.#tokenizer
+    ) {
+      this.log(`Reranker suite already fully initialized - reusing.`);
       return;
     }
 
-    await import("@xenova/transformers").then(
-      async ({ AutoModelForSequenceClassification, AutoTokenizer, env }) => {
+    if (NativeEmbeddingReranker.#initializationPromise) {
+      this.log(`Waiting for existing initialization to complete...`);
+      await NativeEmbeddingReranker.#initializationPromise;
+      return;
+    }
+
+    NativeEmbeddingReranker.#initializationPromise = (async () => {
+      try {
+        const { AutoModelForSequenceClassification, AutoTokenizer, env } =
+          await import("@xenova/transformers");
         this.log(`Loading reranker suite...`);
         NativeEmbeddingReranker.#transformers = {
           AutoModelForSequenceClassification,
@@ -90,9 +108,12 @@ class NativeEmbeddingReranker {
         // 3. Download and cache from fallback host (cdn.anythingllm.com)
         await this.#getPreTrainedModel();
         await this.#getPreTrainedTokenizer();
+      } finally {
+        NativeEmbeddingReranker.#initializationPromise = null;
       }
-    );
-    return;
+    })();
+
+    await NativeEmbeddingReranker.#initializationPromise;
   }
 
   /**
@@ -212,20 +233,38 @@ class NativeEmbeddingReranker {
 
     const start = Date.now();
     this.log(`Reranking ${documents.length} documents...`);
-    const inputs = tokenizer(new Array(documents.length).fill(query), {
-      text_pair: documents.map((doc) => doc.text),
-      padding: true,
-      truncation: true,
-    });
-    const { logits } = await model(inputs);
-    const reranked = logits
-      .sigmoid()
-      .tolist()
-      .map(([score], i) => ({
-        rerank_corpus_id: i,
-        rerank_score: score,
-        ...documents[i],
-      }))
+    // Scored in batches to bound peak memory - see maxBatchSize
+    const scored = [];
+    for (
+      let offset = 0;
+      offset < documents.length;
+      offset += NativeEmbeddingReranker.maxBatchSize
+    ) {
+      const batch = documents.slice(
+        offset,
+        offset + NativeEmbeddingReranker.maxBatchSize
+      );
+      const inputs = tokenizer(new Array(batch.length).fill(query), {
+        text_pair: batch.map((doc) => doc.text),
+        padding: true,
+        truncation: true,
+      });
+      const { logits } = await model(inputs);
+      logits
+        .sigmoid()
+        .tolist()
+        .forEach(([score], i) => {
+          scored.push({
+            // Offset so ids index the caller's array, not the batch
+            rerank_corpus_id: offset + i,
+            rerank_score: score,
+            ...documents[offset + i],
+          });
+        });
+    }
+
+    // Sort once across all batches so topK is global, not per-batch
+    const reranked = scored
       .sort((a, b) => b.rerank_score - a.rerank_score)
       .slice(0, options.topK);
 

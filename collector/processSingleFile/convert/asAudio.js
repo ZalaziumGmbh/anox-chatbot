@@ -8,13 +8,22 @@ const { tokenizeString } = require("../../utils/tokenizer");
 const { default: slugify } = require("slugify");
 const { LocalWhisper } = require("../../utils/WhisperProviders/localWhisper");
 const { OpenAiWhisper } = require("../../utils/WhisperProviders/OpenAiWhisper");
+const {
+  GenericOpenAiWhisper,
+} = require("../../utils/WhisperProviders/GenericOpenAiWhisper");
 
 const WHISPER_PROVIDERS = {
   openai: OpenAiWhisper,
+  "generic-openai": GenericOpenAiWhisper,
   local: LocalWhisper,
 };
 
-async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
+async function asAudio({
+  fullFilePath = "",
+  filename = "",
+  options = {},
+  metadata = {},
+}) {
   const WhisperProvider = WHISPER_PROVIDERS.hasOwnProperty(
     options?.whisperProvider
   )
@@ -27,7 +36,7 @@ async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
 
   if (!!error) {
     console.error(`Error encountered for parsing of ${filename}.`);
-    trashFile(fullFilePath);
+    if (!options.absolutePath) trashFile(fullFilePath);
     return {
       success: false,
       reason: error,
@@ -37,7 +46,7 @@ async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
 
   if (!content?.length) {
     console.error(`Resulting text content was empty for ${filename}.`);
-    trashFile(fullFilePath);
+    if (!options.absolutePath) trashFile(fullFilePath);
     return {
       success: false,
       reason: `No text content found in ${filename}.`,
@@ -48,22 +57,23 @@ async function asAudio({ fullFilePath = "", filename = "", options = {} }) {
   const data = {
     id: v4(),
     url: "file://" + fullFilePath,
-    title: filename,
-    docAuthor: "no author found",
-    description: "No description found.",
-    docSource: "pdf file uploaded by the user.",
-    chunkSource: "",
+    title: metadata.title || filename,
+    docAuthor: metadata.docAuthor || "no author found",
+    description: metadata.description || "No description found.",
+    docSource: metadata.docSource || "audio file uploaded by the user.",
+    chunkSource: metadata.chunkSource || "",
     published: createdDate(fullFilePath),
     wordCount: content.split(" ").length,
     pageContent: content,
     token_count_estimate: tokenizeString(content),
   };
 
-  const document = writeToServerDocuments(
+  const document = writeToServerDocuments({
     data,
-    `${slugify(filename)}-${data.id}`
-  );
-  trashFile(fullFilePath);
+    filename: `${slugify(filename)}-${data.id}`,
+    options: { parseOnly: options.parseOnly },
+  });
+  if (!options.absolutePath) trashFile(fullFilePath);
   console.log(
     `[SUCCESS]: ${filename} transcribed, converted & ready for embedding.\n`
   );

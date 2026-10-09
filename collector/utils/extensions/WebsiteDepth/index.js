@@ -4,10 +4,12 @@ const {
 } = require("langchain/document_loaders/web/puppeteer");
 const { default: slugify } = require("slugify");
 const { parse } = require("node-html-parser");
-const { writeToServerDocuments } = require("../../files");
+const { writeToServerDocuments, documentsFolder } = require("../../files");
 const { tokenizeString } = require("../../tokenizer");
 const path = require("path");
 const fs = require("fs");
+const RuntimeSettings = require("../../runtimeSettings");
+const { decodePathname } = require("../../url");
 
 async function discoverLinks(startUrl, maxDepth = 1, maxLinks = 20) {
   const baseUrl = new URL(startUrl);
@@ -46,13 +48,38 @@ async function discoverLinks(startUrl, maxDepth = 1, maxLinks = 20) {
 
 async function getPageLinks(url, baseUrl) {
   try {
+    const runtimeSettings = new RuntimeSettings();
+    /** @type {import('puppeteer').PuppeteerLaunchOptions} */
+    let launchConfig = { headless: "new" };
+
+    /* On MacOS 15.1, the headless=new option causes the browser to crash immediately.
+     * It is not clear why this is the case, but it is reproducible. Since AnythinglLM
+     * in production runs in a container, we can disable headless mode to workaround the issue for development purposes.
+     *
+     * This may show a popup window when scraping a page in development mode.
+     * This is expected behavior if seen in development mode on MacOS 15+
+     */
+    if (
+      process.platform === "darwin" &&
+      process.env.NODE_ENV === "development"
+    ) {
+      console.log(
+        "Darwin Development Mode: Disabling headless mode to prevent Chromium from crashing."
+      );
+      launchConfig.headless = "false";
+    }
+
     const loader = new PuppeteerWebBaseLoader(url, {
-      launchOptions: { headless: "new" },
+      launchOptions: {
+        headless: launchConfig.headless,
+        ignoreHTTPSErrors: true,
+        args: runtimeSettings.get("browserLaunchArgs"),
+      },
       gotoOptions: { waitUntil: "networkidle2" },
     });
     const docs = await loader.load();
     const html = docs[0].pageContent;
-    const links = extractLinks(html, baseUrl);
+    const links = extractLinks(html, baseUrl, new URL(url));
     return links;
   } catch (error) {
     console.error(`Failed to get page links from ${url}.`, error);
@@ -60,22 +87,39 @@ async function getPageLinks(url, baseUrl) {
   }
 }
 
-function extractLinks(html, baseUrl) {
+function extractLinks(html, baseUrl, pageUrl = baseUrl) {
   const root = parse(html);
   const links = root.querySelectorAll("a");
   const extractedLinks = new Set();
 
+  // The start URL's parent path, or "" for a bare origin, which stays
+  // site-wide. Comparing the parsed origin and whole path segments rather
+  // than a string prefix: "https://example.com" also prefixed
+  // "https://example.com.evil.net", and "/docs" also prefixed
+  // "/docs-private".
+  const parentPath = baseUrl.pathname.split("/").slice(0, -1).join("/");
+  const scopePath = parentPath === "/" ? "" : parentPath;
+
   for (const link of links) {
     const href = link.getAttribute("href");
-    if (href) {
-      const absoluteUrl = new URL(href, baseUrl.href).href;
-      if (
-        absoluteUrl.startsWith(
-          baseUrl.origin + baseUrl.pathname.split("/").slice(0, -1).join("/")
-        )
-      ) {
-        extractedLinks.add(absoluteUrl);
-      }
+    if (!href) continue;
+
+    // A single malformed href (e.g. href="http://") must not abort
+    // extraction of the page's remaining links.
+    let absoluteUrl;
+    try {
+      absoluteUrl = new URL(href, pageUrl.href);
+    } catch {
+      continue;
+    }
+
+    const inScope =
+      absoluteUrl.origin === baseUrl.origin &&
+      (!scopePath ||
+        absoluteUrl.pathname === scopePath ||
+        absoluteUrl.pathname.startsWith(`${scopePath}/`));
+    if (inScope) {
+      extractedLinks.add(absoluteUrl.href);
     }
   }
 
@@ -83,6 +127,24 @@ function extractLinks(html, baseUrl) {
 }
 
 async function bulkScrapePages(links, outFolderPath) {
+  const runtimeSettings = new RuntimeSettings();
+  /** @type {import('puppeteer').PuppeteerLaunchOptions} */
+  let launchConfig = { headless: "new" };
+
+  /* On MacOS 15.1, the headless=new option causes the browser to crash immediately.
+   * It is not clear why this is the case, but it is reproducible. Since AnythinglLM
+   * in production runs in a container, we can disable headless mode to workaround the issue for development purposes.
+   *
+   * This may show a popup window when scraping a page in development mode.
+   * This is expected behavior if seen in development mode on MacOS 15+
+   */
+  if (process.platform === "darwin" && process.env.NODE_ENV === "development") {
+    console.log(
+      "Darwin Development Mode: Disabling headless mode to prevent Chromium from crashing."
+    );
+    launchConfig.headless = "false";
+  }
+
   const scrapedData = [];
 
   for (let i = 0; i < links.length; i++) {
@@ -91,7 +153,11 @@ async function bulkScrapePages(links, outFolderPath) {
 
     try {
       const loader = new PuppeteerWebBaseLoader(link, {
-        launchOptions: { headless: "new" },
+        launchOptions: {
+          headless: launchConfig.headless,
+          ignoreHTTPSErrors: true,
+          args: runtimeSettings.get("browserLaunchArgs"),
+        },
         gotoOptions: { waitUntil: "networkidle2" },
         async evaluate(page, browser) {
           const result = await page.evaluate(() => document.body.innerText);
@@ -108,7 +174,7 @@ async function bulkScrapePages(links, outFolderPath) {
       }
 
       const url = new URL(link);
-      const decodedPathname = decodeURIComponent(url.pathname);
+      const decodedPathname = decodePathname(url.pathname);
       const filename = `${url.hostname}${decodedPathname.replace(/\//g, "_")}`;
 
       const data = {
@@ -125,7 +191,11 @@ async function bulkScrapePages(links, outFolderPath) {
         token_count_estimate: tokenizeString(content),
       };
 
-      writeToServerDocuments(data, data.title, outFolderPath);
+      writeToServerDocuments({
+        data,
+        filename: data.title,
+        destinationOverride: outFolderPath,
+      });
       scrapedData.push(data);
 
       console.log(`Successfully scraped ${link}.`);
@@ -142,14 +212,7 @@ async function websiteScraper(startUrl, depth = 1, maxLinks = 20) {
   const outFolder = slugify(
     `${slugify(websiteName)}-${v4().slice(0, 4)}`
   ).toLowerCase();
-  const outFolderPath =
-    process.env.NODE_ENV === "development"
-      ? path.resolve(
-          __dirname,
-          `../../../../server/storage/documents/${outFolder}`
-        )
-      : path.resolve(process.env.STORAGE_DIR, `documents/${outFolder}`);
-
+  const outFolderPath = path.resolve(documentsFolder, outFolder);
   console.log("Discovering links...");
   const linksToScrape = await discoverLinks(startUrl, depth, maxLinks);
   console.log(`Found ${linksToScrape.length} links to scrape.`);
@@ -164,3 +227,5 @@ async function websiteScraper(startUrl, depth = 1, maxLinks = 20) {
 }
 
 module.exports = websiteScraper;
+// Exposed for tests; the scraper itself is the module's callable export.
+module.exports.extractLinks = extractLinks;

@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { default: slugify } = require("slugify");
 const { v4 } = require("uuid");
-const { writeToServerDocuments } = require("../../../files");
+const { sanitizeFileName, writeToServerDocuments } = require("../../../files");
 const { tokenizeString } = require("../../../tokenizer");
 
 /**
@@ -50,7 +50,8 @@ async function loadGitlabRepo(args, response) {
     fs.mkdirSync(outFolderPath, { recursive: true });
 
   for (const doc of docs) {
-    if (!doc.metadata || (!doc.pageContent && !doc.issue)) continue;
+    if (!doc.metadata || (!doc.pageContent && !doc.issue && !doc.wiki))
+      continue;
     let pageContent = null;
 
     const data = {
@@ -77,6 +78,14 @@ async function loadGitlabRepo(args, response) {
       data.title = `Issue ${doc.issue.iid}: ${doc.issue.title}`;
       data.docAuthor = doc.issue.author.username;
       data.description = doc.issue.description;
+    } else if (doc.wiki) {
+      pageContent = doc.wiki.content;
+      data.title = doc.wiki.title;
+      data.docAuthor = repo.author;
+      data.description =
+        doc.wiki.format === "markdown"
+          ? "GitLab Wiki Page (Markdown)"
+          : "GitLab Wiki Page";
     } else {
       continue;
     }
@@ -89,11 +98,11 @@ async function loadGitlabRepo(args, response) {
       `[GitLab Loader]: Saving ${doc.metadata.source} to ${outFolder}`
     );
 
-    writeToServerDocuments(
+    writeToServerDocuments({
       data,
-      `${slugify(doc.metadata.source)}-${data.id}`,
-      outFolderPath
-    );
+      filename: sanitizeFileName(`${slugify(doc.metadata.source)}-${data.id}`),
+      destinationOverride: outFolderPath,
+    });
   }
 
   return {
@@ -132,7 +141,7 @@ async function fetchGitlabFile({
   console.log(
     `-- Working GitLab ${repo.author}/${repo.project}:${repo.branch} file:${sourceFilePath} --`
   );
-  const fileContent = await repo.fetchSingleFile(sourceFilePath);
+  const fileContent = await repo.fetchSingleFileContents(sourceFilePath);
   if (!fileContent) {
     return {
       success: false,
@@ -148,13 +157,80 @@ async function fetchGitlabFile({
   };
 }
 
+async function fetchGitlabIssue({
+  repoUrl,
+  branch,
+  accessToken = null,
+  issueId,
+}) {
+  const repo = new RepoLoader({ repo: repoUrl, branch, accessToken });
+  await repo.init();
+
+  if (!repo.ready)
+    return {
+      success: false,
+      content: null,
+      reason: "Could not prepare GitLab repo for loading! Check URL or PAT.",
+    };
+  console.log(
+    `-- Working GitLab ${repo.author}/${repo.project} issue:${issueId} --`
+  );
+  const issue = await repo.fetchSingleIssue(issueId);
+  if (!issue)
+    return {
+      success: false,
+      reason: "Target issue returned a null content response.",
+      content: null,
+    };
+
+  return { success: true, reason: null, content: issueToMarkdown(issue) };
+}
+
+async function fetchGitlabWiki({ repoUrl, branch, accessToken = null, slug }) {
+  const repo = new RepoLoader({ repo: repoUrl, branch, accessToken });
+  await repo.init();
+
+  if (!repo.ready)
+    return {
+      success: false,
+      content: null,
+      reason: "Could not prepare GitLab repo for loading! Check URL or PAT.",
+    };
+  console.log(
+    `-- Working GitLab ${repo.author}/${repo.project} wiki:${slug} --`
+  );
+  const page = (await repo.fetchWiki()).find(
+    ({ slug: pageSlug }) => pageSlug === slug
+  );
+  if (!page?.content)
+    return {
+      success: false,
+      reason: "Target wiki page returned a null content response.",
+      content: null,
+    };
+
+  return { success: true, reason: null, content: page.content };
+}
+
 function generateChunkSource(repo, doc, encryptionWorker) {
   const payload = {
     projectId: decodeURIComponent(repo.projectId),
     branch: repo.branch,
     path: doc.metadata.source,
     pat: !!repo.accessToken ? repo.accessToken : null,
+    scheme: new URL(repo.repo).protocol.replace(":", ""),
   };
+
+  // Issues and wiki pages are not repository files, so a re-sync has to know which
+  // kind of document it holds and which issue or page to fetch again.
+  if (doc.issue) {
+    payload.kind = "issue";
+    payload.ref = doc.issue.iid;
+  } else if (doc.wiki) {
+    payload.kind = "wiki";
+    payload.ref = doc.wiki.slug;
+  }
+
   return `gitlab://${repo.repo}?payload=${encryptionWorker.encrypt(
     JSON.stringify(payload)
   )}`;
@@ -249,4 +325,11 @@ ${issue.discussions.join("\n\n")}
   return markdown;
 }
 
-module.exports = { loadGitlabRepo, fetchGitlabFile };
+module.exports = {
+  loadGitlabRepo,
+  fetchGitlabFile,
+  fetchGitlabIssue,
+  fetchGitlabWiki,
+  generateChunkSource,
+  issueToMarkdown,
+};

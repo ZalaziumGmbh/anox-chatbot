@@ -5,11 +5,22 @@ const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 const {
   StdioClientTransport,
 } = require("@modelcontextprotocol/sdk/client/stdio.js");
+const {
+  SSEClientTransport,
+} = require("@modelcontextprotocol/sdk/client/sse.js");
+const {
+  StreamableHTTPClientTransport,
+} = require("@modelcontextprotocol/sdk/client/streamableHttp.js");
+const { patchShellEnvironmentPath } = require("../../helpers/shell");
+
+/**
+ * @typedef {'stdio' | 'http'} MCPServerTypes
+ */
 
 /**
  * @class MCPHypervisor
  * @description A class that manages MCP servers found in the storage/plugins/anythingllm_mcp_servers.json file.
- * This class is responsible for booting, stopping, and reloading MCP servers - it is the user responsiblity for the MCP server definitions
+ * This class is responsible for booting, stopping, and reloading MCP servers - it is the user responsibility for the MCP server definitions
  * to me correct and also functioning tools depending on their deployment (docker vs local) as well as the security of said tools
  * since MCP is basically arbitrary code execution.
  *
@@ -43,6 +54,7 @@ class MCPHypervisor {
   constructor() {
     if (MCPHypervisor._instance) return MCPHypervisor._instance;
     MCPHypervisor._instance = this;
+    this.className = "MCPHypervisor";
     this.log("Initializing MCP Hypervisor - subsequent calls will boot faster");
     this.#setupConfigFile();
     return this;
@@ -78,7 +90,7 @@ class MCPHypervisor {
   }
 
   log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   /**
@@ -116,6 +128,66 @@ class MCPHypervisor {
     );
     this.log(`MCP server ${name} removed from config file`);
     return true;
+  }
+
+  /**
+   * Update the suppressed tools for an MCP server
+   * @param {string} serverName - The name of the MCP server
+   * @param {string} toolName - The name of the tool to toggle
+   * @param {boolean} enabled - Whether the tool should be enabled (true) or suppressed (false)
+   * @returns {{success: boolean, error: string | null, suppressedTools: string[]}}
+   */
+  updateSuppressedTools(serverName, toolName, enabled) {
+    const servers = safeJsonParse(
+      fs.readFileSync(this.mcpServerJSONPath, "utf8"),
+      { mcpServers: {} }
+    );
+
+    if (!servers.mcpServers[serverName]) {
+      return {
+        success: false,
+        error: `MCP server ${serverName} not found in config file.`,
+        suppressedTools: [],
+      };
+    }
+
+    const server = servers.mcpServers[serverName];
+    if (!server.anythingllm) server.anythingllm = {};
+    if (!Array.isArray(server.anythingllm.suppressedTools))
+      server.anythingllm.suppressedTools = [];
+
+    const suppressedTools = server.anythingllm.suppressedTools;
+
+    if (enabled) {
+      const index = suppressedTools.indexOf(toolName);
+      if (index > -1) suppressedTools.splice(index, 1);
+    } else {
+      if (!suppressedTools.includes(toolName)) suppressedTools.push(toolName);
+    }
+
+    server.anythingllm.suppressedTools = suppressedTools;
+    servers.mcpServers[serverName] = server;
+
+    fs.writeFileSync(
+      this.mcpServerJSONPath,
+      JSON.stringify(servers, null, 2),
+      "utf8"
+    );
+
+    this.log(
+      `MCP server ${serverName} tool ${toolName} ${enabled ? "enabled" : "suppressed"}`
+    );
+    return { success: true, error: null, suppressedTools };
+  }
+
+  /**
+   * Get the suppressed tools for an MCP server
+   * @param {string} serverName - The name of the MCP server
+   * @returns {string[]} - Array of suppressed tool names
+   */
+  getSuppressedTools(serverName) {
+    const config = this.mcpServerConfigs.find((s) => s.name === serverName);
+    return config?.server?.anythingllm?.suppressedTools || [];
   }
 
   /**
@@ -182,8 +254,9 @@ class MCPHypervisor {
 
     this.log(`Pruning MCP server: ${name}`);
     const mcp = this.mcps[name];
+    if (!mcp.transport) return true;
     const childProcess = mcp.transport._process;
-    if (childProcess) childProcess.kill(1);
+    if (childProcess) childProcess.kill("SIGTERM");
     mcp.transport.close();
 
     delete this.mcps[name];
@@ -204,10 +277,11 @@ class MCPHypervisor {
     for (const name of Object.keys(this.mcps)) {
       if (!this.mcps[name]) continue;
       const mcp = this.mcps[name];
+      if (!mcp.transport) continue;
       const childProcess = mcp.transport._process;
       if (childProcess)
         this.log(`Killing MCP ${name} (PID: ${childProcess.pid})`, {
-          killed: childProcess.kill(1),
+          killed: childProcess.kill("SIGTERM"),
         });
 
       mcp.transport.close();
@@ -215,6 +289,154 @@ class MCPHypervisor {
     }
     this.mcps = {};
     this.mcpLoadingResults = {};
+  }
+
+  /**
+   * Build the MCP server environment variables - ensures proper PATH and NODE_PATH
+   * inheritance across all platforms and deployment scenarios.
+   * @param {Object} server - The server definition
+   * @returns {Promise<{env: { [key: string]: string } | {}}}> - The environment variables
+   */
+  async #buildMCPServerENV(server) {
+    const shellEnv = await patchShellEnvironmentPath();
+    let baseEnv = {
+      PATH:
+        shellEnv.PATH ||
+        process.env.PATH ||
+        "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+      NODE_PATH:
+        shellEnv.NODE_PATH ||
+        process.env.NODE_PATH ||
+        "/usr/local/lib/node_modules",
+      ...shellEnv, // Include all shell environment variables
+    };
+
+    // Docker-specific environment setup
+    if (process.env.ANYTHING_LLM_RUNTIME === "docker") {
+      baseEnv = {
+        // Fixed: NODE_PATH should point to modules directory, not node binary
+        NODE_PATH: "/usr/local/lib/node_modules",
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+        ...baseEnv, // Allow inheritance to override docker defaults if needed
+      };
+    }
+
+    // No custom environment specified - return base environment
+    if (!server?.env || Object.keys(server.env).length === 0) {
+      return { env: baseEnv };
+    }
+
+    // Merge user-specified environment with base environment
+    // User environment takes precedence over defaults
+    return {
+      env: {
+        ...baseEnv,
+        ...server.env,
+      },
+    };
+  }
+
+  /**
+   * Parse the server type from the server definition
+   * @param {Object} server - The server definition
+   * @returns {MCPServerTypes | null} - The server type
+   */
+  #parseServerType(server) {
+    if (
+      server.type === "sse" ||
+      server.type === "streamable" ||
+      server.type === "http"
+    )
+      return "http";
+    if (Object.prototype.hasOwnProperty.call(server, "command")) return "stdio";
+    if (Object.prototype.hasOwnProperty.call(server, "url")) return "http";
+    return null;
+  }
+
+  /**
+   * Validate the server definition by type
+   * - Will throw an error if the server definition is invalid
+   * @param {string} name - The name of the MCP server
+   * @param {Object} server - The server definition
+   * @param {MCPServerTypes} type - The server type
+   * @returns {void}
+   */
+  #validateServerDefinitionByType(name, server, type) {
+    if (type === "http") {
+      // "type" is optional for http servers - when omitted, SSE is assumed
+      // (see createHttpTransport). An explicit unknown value is a config error.
+      if (
+        server.type !== undefined &&
+        !["sse", "streamable", "http"].includes(server.type)
+      ) {
+        throw new Error("MCP server type must have sse or streamable value.");
+      }
+
+      if (!server.url) {
+        throw new Error(
+          `MCP server "${name}": missing required "url" for ${server.type || "sse"} transport`
+        );
+      }
+
+      try {
+        new URL(server.url);
+      } catch {
+        throw new Error(`MCP server "${name}": invalid URL "${server.url}"`);
+      }
+      return;
+    }
+
+    if (type === "stdio") {
+      if (
+        Object.prototype.hasOwnProperty.call(server, "args") &&
+        !Array.isArray(server.args)
+      )
+        throw new Error("MCP server args must be an array");
+    }
+    return;
+  }
+
+  /**
+   * Setup the server transport by type and server definition
+   * @param {Object} server - The server definition
+   * @param {MCPServerTypes} type - The server type
+   * @returns {Promise<StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport>} - The server transport
+   */
+  async #setupServerTransport(server, type) {
+    // if not stdio then it is http or sse
+    if (type !== "stdio") return this.createHttpTransport(server);
+
+    return new StdioClientTransport({
+      command: server.command,
+      args: server?.args ?? [],
+      ...(await this.#buildMCPServerENV(server)),
+    });
+  }
+
+  /**
+   * Create MCP client transport for http MCP server.
+   * @param {Object} server - The server definition
+   * @returns {StreamableHTTPClientTransport | SSEClientTransport} - The server transport
+   */
+  createHttpTransport(server) {
+    const url = new URL(server.url);
+
+    // If the server block has a type property then use that to determine the transport type
+    switch (server.type) {
+      case "streamable":
+      case "http":
+        return new StreamableHTTPClientTransport(url, {
+          requestInit: {
+            headers: server.headers,
+          },
+        });
+      default:
+        return new SSEClientTransport(url, {
+          requestInit: {
+            headers: server.headers,
+          },
+        });
+    }
   }
 
   /**
@@ -226,17 +448,13 @@ class MCPHypervisor {
   async #startMCPServer({ name, server }) {
     if (!name) throw new Error("MCP server name is required");
     if (!server) throw new Error("MCP server definition is required");
-    if (!server.command) throw new Error("MCP server command is required");
-    if (server.hasOwnProperty("args") && !Array.isArray(server.args))
-      throw new Error("MCP server args must be an array");
+    const serverType = this.#parseServerType(server);
+    if (!serverType) throw new Error("MCP server command or url is required");
 
+    this.#validateServerDefinitionByType(name, server, serverType);
     this.log(`Attempting to start MCP server: ${name}`);
     const mcp = new Client({ name: name, version: "1.0.0" });
-    const transport = new StdioClientTransport({
-      command: server.command,
-      args: server?.args ?? [],
-      ...(server?.env ? { env: server.env } : {}),
-    });
+    const transport = await this.#setupServerTransport(server, serverType);
 
     // Add connection event listeners
     transport.onclose = () => this.log(`${name} - Transport closed`);
@@ -248,10 +466,22 @@ class MCPHypervisor {
     // Connect and await the connection with a timeout
     this.mcps[name] = mcp;
     const connectionPromise = mcp.connect(transport);
+
+    let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Connection timeout")), 30_000); // 30 second timeout
+      timeoutId = setTimeout(
+        () => reject(new Error("Connection timeout")),
+        30_000
+      ); // 30 second timeout
     });
-    await Promise.race([connectionPromise, timeoutPromise]);
+
+    try {
+      await Promise.race([connectionPromise, timeoutPromise]);
+      if (timeoutId) clearTimeout(timeoutId);
+    } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
+      throw error;
+    }
     return true;
   }
 

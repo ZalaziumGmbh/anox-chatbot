@@ -4,14 +4,38 @@ const { SystemSettings } = require("./systemSettings");
 const { Telemetry } = require("./telemetry");
 
 /**
- * @typedef {('link'|'youtube'|'confluence'|'github'|'gitlab')} validFileType
+ * @typedef {('link'|'youtube'|'confluence'|'github'|'gitlab'|'gitea')} validFileType
  */
 
 const DocumentSyncQueue = {
   featureKey: "experimental_live_file_sync",
   // update the validFileTypes and .canWatch properties when adding elements here.
-  validFileTypes: ["link", "youtube", "confluence", "github", "gitlab"],
-  defaultStaleAfter: 604800000,
+  validFileTypes: [
+    "link",
+    "youtube",
+    "confluence",
+    "github",
+    "gitlab",
+    "gitea",
+    "drupalwiki",
+  ],
+  /**
+   * The default time (in milliseconds) a watched document waits before it is
+   * considered "stale" and re-synced by the background worker.
+   *
+   * Defaults to 7 days but can be overridden via the
+   * `DOCUMENT_SYNC_STALE_AFTER_MS` environment variable. A minimum of 1 hour is
+   * enforced to avoid overloading embedders by re-syncing documents too
+   * frequently. Invalid or non-positive values fall back to the default.
+   * @returns {number} - the stale-after time in milliseconds
+   */
+  get defaultStaleAfter() {
+    const DEFAULT_STALE_AFTER = 604800000; // 7 days in MS
+    const MIN_STALE_AFTER = 3600000; // 1 hour in MS
+    const envValue = Number(process.env.DOCUMENT_SYNC_STALE_AFTER_MS);
+    if (isNaN(envValue) || envValue <= 0) return DEFAULT_STALE_AFTER;
+    return Math.max(envValue, MIN_STALE_AFTER);
+  },
   maxRepeatFailures: 5, // How many times a run can fail in a row before pruning.
   writable: [],
 
@@ -46,12 +70,16 @@ const DocumentSyncQueue = {
    * @returns {boolean} - true if the document can be watched, false otherwise
    */
   canWatch: function ({ title, chunkSource = null } = {}) {
+    if (!chunkSource) return false;
+
     if (chunkSource.startsWith("link://") && title.endsWith(".html"))
       return true; // If is web-link material (prior to feature most chunkSources were links://)
     if (chunkSource.startsWith("youtube://")) return true; // If is a youtube link
     if (chunkSource.startsWith("confluence://")) return true; // If is a confluence document link
     if (chunkSource.startsWith("github://")) return true; // If is a GitHub file reference
     if (chunkSource.startsWith("gitlab://")) return true; // If is a GitLab file reference
+    if (chunkSource.startsWith("gitea://")) return true; // If is a Gitea file reference
+    if (chunkSource.startsWith("drupalwiki://")) return true; // If is a DrupalWiki document link
     return false;
   },
 
@@ -80,6 +108,7 @@ const DocumentSyncQueue = {
       const queue = await prisma.document_sync_queues.create({
         data: {
           workspaceDocId: document.id,
+          staleAfterMs: this.defaultStaleAfter,
           nextSyncAt: new Date(Number(new Date()) + this.defaultStaleAfter),
         },
       });

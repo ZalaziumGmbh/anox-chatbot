@@ -3,8 +3,8 @@ const { SystemSettings } = require("../../../models/systemSettings");
 const { purgeDocument } = require("../../../utils/files/purgeDocument");
 const { getVectorDbClass } = require("../../../utils/helpers");
 const {
-  prepareWorkspaceChatsForExport,
   exportChatsAsType,
+  validExportTypes,
 } = require("../../../utils/helpers/chat/convertTo");
 const { dumpENV, updateENV } = require("../../../utils/helpers/updateENV");
 const { reqBody } = require("../../../utils/http");
@@ -192,8 +192,17 @@ function apiSystemEndpoints(app) {
     */
       try {
         const { type = "jsonl" } = request.query;
-        const chats = await prepareWorkspaceChatsForExport(type);
-        const { contentType, data } = await exportChatsAsType(chats, type);
+        if (!validExportTypes.includes(type)) {
+          response.status(400).json({
+            message: `Invalid export type: ${type}. Must be one of ${validExportTypes.join(", ")}`,
+          });
+          return;
+        }
+
+        const { contentType, data } = await exportChatsAsType(
+          type,
+          "workspace"
+        );
         await EventLogs.logEvent("exported_chats", {
           type,
         });

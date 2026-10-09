@@ -1,96 +1,100 @@
-const { OpenAIClient, AzureKeyCredential } = require("@azure/openai");
+const { OpenAI } = require("openai");
+const { AzureOpenAiLLM } = require("../../../AiProviders/azureOpenAi");
 const Provider = require("./ai-provider.js");
-const InheritMultiple = require("./helpers/classes.js");
-const UnTooled = require("./helpers/untooled.js");
+const { tooledStream, tooledComplete } = require("./helpers/tooled.js");
+const { RetryError } = require("../error.js");
 
 /**
  * The agent provider for the Azure OpenAI API.
+ * Uses the shared native tool calling helper for OpenAI-compatible tool calling.
  */
-class AzureOpenAiProvider extends InheritMultiple([Provider, UnTooled]) {
+class AzureOpenAiProvider extends Provider {
   model;
 
-  constructor(_config = {}) {
-    super();
-    const client = new OpenAIClient(
-      process.env.AZURE_OPENAI_ENDPOINT,
-      new AzureKeyCredential(process.env.AZURE_OPENAI_KEY)
-    );
-    this._client = client;
-    this.model = process.env.OPEN_MODEL_PREF ?? "gpt-3.5-turbo";
+  constructor(config = { model: null }) {
+    const client = new OpenAI({
+      apiKey: process.env.AZURE_OPENAI_KEY,
+      baseURL: AzureOpenAiLLM.formatBaseUrl(process.env.AZURE_OPENAI_ENDPOINT),
+    });
+    super(client);
+    this.providerTag = "azure";
+    this.model =
+      config.model ||
+      process.env.AZURE_OPENAI_MODEL_PREF ||
+      process.env.OPEN_MODEL_PREF;
     this.verbose = true;
   }
 
-  get client() {
-    return this._client;
-  }
-
-  async #handleFunctionCallChat({ messages = [] }) {
-    return await this.client
-      .getChatCompletions(this.model, messages, {
-        temperature: 0,
-      })
-      .then((result) => {
-        if (!result.hasOwnProperty("choices"))
-          throw new Error("Azure OpenAI chat: No results!");
-        if (result.choices.length === 0)
-          throw new Error("Azure OpenAI chat: No results length!");
-        return result.choices[0].message.content;
-      })
-      .catch((_) => {
-        return null;
-      });
+  get supportsAgentStreaming() {
+    return true;
   }
 
   /**
-   * Create a completion based on the received messages.
+   * Stream a chat completion from Azure OpenAI with tool calling.
    *
-   * @param messages A list of messages to send to the API.
-   * @param functions
+   * @param {any[]} messages
+   * @param {any[]} functions
+   * @param {function} eventHandler
+   * @returns {Promise<{ functionCall: any, textResponse: string, uuid: string }>}
+   */
+  async stream(messages, functions = [], eventHandler = null) {
+    this.providerLog("Provider.stream - will process this chat completion.");
+
+    try {
+      return await tooledStream(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        eventHandler,
+        { provider: this }
+      );
+    } catch (error) {
+      console.error(error.message, error);
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Create a completion based on the received messages with tool calling.
+   *
+   * @param {any[]} messages
+   * @param {any[]} functions
    * @returns The completion.
    */
   async complete(messages, functions = []) {
     try {
-      let completion;
-      if (functions.length > 0) {
-        const { toolCall, text } = await this.functionCall(
-          messages,
-          functions,
-          this.#handleFunctionCallChat.bind(this)
-        );
-        if (toolCall !== null) {
-          this.providerLog(`Valid tool call found - running ${toolCall.name}.`);
-          this.deduplicator.trackRun(toolCall.name, toolCall.arguments);
-          return {
-            result: null,
-            functionCall: {
-              name: toolCall.name,
-              arguments: toolCall.arguments,
-            },
-            cost: 0,
-          };
-        }
-        completion = { content: text };
-      }
-      if (!completion?.content) {
-        this.providerLog(
-          "Will assume chat completion without tool call inputs."
-        );
-        const response = await this.client.getChatCompletions(
-          this.model,
-          this.cleanMsgs(messages),
-          {
-            temperature: 0.7,
-          }
-        );
-        completion = response.choices[0].message;
+      const result = await tooledComplete(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        this.getCost.bind(this),
+        { provider: this }
+      );
+
+      if (result.retryWithError) {
+        return this.complete([...messages, result.retryWithError], functions);
       }
 
-      // The UnTooled class inherited Deduplicator is mostly useful to prevent the agent
-      // from calling the exact same function over and over in a loop within a single chat exchange
-      // _but_ we should enable it to call previously used tools in a new chat interaction.
-      this.deduplicator.reset("runs");
-      return { result: completion.content, cost: 0 };
+      return result;
     } catch (error) {
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
       throw error;
     }
   }

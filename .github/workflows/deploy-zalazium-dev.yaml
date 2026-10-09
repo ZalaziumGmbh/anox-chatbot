@@ -23,8 +23,8 @@ jobs:
       - name: Build container image
         run: |
           docker buildx create --use
-          docker buildx build . -f docker/Dockerfile -t ${{ secrets.DOCKER_USER }}/chatbot:dev --load
+          docker buildx build . -f docker/Dockerfile -t ${{ secrets.DOCKER_USER }}/chatbot:zalazium-one-dev --load
 
       # Push image to Docker Hub
       - name: Push image to Docker Hub
-        run: docker push ${{ secrets.DOCKER_USER }}/chatbot:dev
+        run: docker push ${{ secrets.DOCKER_USER }}/chatbot:zalazium-one-dev

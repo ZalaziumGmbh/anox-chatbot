@@ -5,7 +5,7 @@
 name: Verify translations files
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -16,6 +16,7 @@ on:
 
 jobs:
   run-script:
+    if: github.repository == 'Mintplex-Labs/anything-llm'
     runs-on: ubuntu-latest
 
     steps:

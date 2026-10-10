@@ -11,11 +11,28 @@ import tempfile
 import urllib.request
 
 CHECKS = {'admin', 'workflow', 'persistence', 'isolated-restore', 'schema-rollback'}
+# GitHub names may change; immutable images and retained recovery points do not.
+# Contract parity is checked in test_one_promotion.py before this script is copied
+# into product CI. Accept legacy names until the final consumer is retired.
+IMAGE_REPOSITORIES = {
+    'anox-pro': 'anox-pro', 'anox-task': 'anox-task', 'litellm': 'litellm',
+    'sales': 'sales', 'anox-crm': 'sales',
+    'dashboard': 'dashboard', 'anox-view': 'dashboard',
+    'mailbot': 'mailbot', 'anox-mail': 'mailbot',
+    'voicebot': 'voicebot', 'anox-voice': 'voicebot',
+    'chatbot': 'chatbot', 'anox-chatbot': 'chatbot',
+}
+
+
+def image_repository(repository):
+    owner, separator, name = repository.partition('/')
+    if owner != 'ZalaziumGmbh' or not separator or name not in IMAGE_REPOSITORIES:
+        raise ValueError('Unregistered repository')
+    return 'zalaziumcode/' + IMAGE_REPOSITORIES[name]
 
 
 def validate(record, run, repository):
-    image_repo = repository.split('/')[-1]
-    target = 'zalaziumcode/' + image_repo
+    target = image_repository(repository)
     if (set(record) != {'revision', 'run_id', 'digest', 'previous_digest', 'backup_id', 'checks', 'evidence'}
             or not re.fullmatch(r'[a-f0-9]{40}', record['revision'])
             or type(record['run_id']) is not int
@@ -42,8 +59,7 @@ def run_command(args, *, data=None):
 def main():
     record = json.loads(Path('.github/one-release.json').read_text())
     repository = os.environ['GITHUB_REPOSITORY']
-    if not re.fullmatch(r'ZalaziumGmbh/(anox-pro|anox-task|sales|dashboard|mailbot|voicebot|chatbot|litellm)', repository):
-        raise ValueError('Unregistered repository')
+    image_repository(repository)
     req = urllib.request.Request('https://api.github.com/repos/' + repository + '/actions/runs/' + str(record['run_id']),
         headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
     with urllib.request.urlopen(req, timeout=30) as response:

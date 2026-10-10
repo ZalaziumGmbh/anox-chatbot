@@ -16,3 +16,7 @@
 **/.log
 !docker/.env.example
 !frontend/.env.production
+# Keep development tools and authentication state outside runtime images.
+.devcontainer/
+**/.codex/
+**/.claude/

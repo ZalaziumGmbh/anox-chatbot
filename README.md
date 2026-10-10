@@ -321,3 +321,11 @@ This project is [MIT](./LICENSE) licensed.
 [sealos-deploy]: https://sealos.io/products/app-store/anything-llm
 [easypanel-btn]: https://easypanel.io/img/deploy-on-easypanel-40.svg
 [easypanel-deploy]: https://easypanel.io/templates/anythingllm
+
+## Development container
+
+Read [native CLI state and rebuild instructions](.devcontainer/AI-STATE.md) before
+the first rebuild. Select existing developer-specific Codex/Claude volumes
+explicitly; missing selections stop creation before replacing a container.
+Native CLI binaries are installed in the development image, outside login state.
+The shared CLI additions are confined to development-container builds.

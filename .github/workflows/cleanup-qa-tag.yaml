@@ -50,7 +50,8 @@ jobs:
   cleanup-auto:
     name: Delete QA GHCR image tag (auto)
     runs-on: ubuntu-latest
-    if: github.repository == 'Mintplex-Labs/anything-llm' && ((github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'PR: Ready for QA')) || (github.event.action == 'unlabeled' && github.event.label.name == 'PR: Ready for QA'))
+    if: >-
+      github.repository == 'Mintplex-Labs/anything-llm' && ((github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'PR: Ready for QA')) || (github.event.action == 'unlabeled' && github.event.label.name == 'PR: Ready for QA'))
     permissions:
       packages: write
     steps:

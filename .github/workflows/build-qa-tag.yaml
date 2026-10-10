@@ -31,7 +31,8 @@ jobs:
     name: Build and push QA image for PR
     runs-on: ubuntu-22.04-arm
     # Run when labeled with "PR: Ready for QA"
-    if: github.repository == 'Mintplex-Labs/anything-llm' && (contains(github.event.pull_request.labels.*.name, 'PR: Ready for QA'))
+    if: >-
+      github.repository == 'Mintplex-Labs/anything-llm' && (contains(github.event.pull_request.labels.*.name, 'PR: Ready for QA'))
     permissions:
       packages: write
       contents: read

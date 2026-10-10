@@ -54,7 +54,7 @@
     "cron-validate": "1.4.5",
     "diff": "7.0.0",
     "docx": "9.6.1",
-    "dompurify": "3.3.3",
+    "dompurify": "3.4.16",
     "dotenv": "^16.0.3",
     "elevenlabs": "^0.5.0",
     "exceljs": "4.4.0",

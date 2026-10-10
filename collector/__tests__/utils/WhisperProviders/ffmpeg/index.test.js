@@ -1,6 +1,7 @@
 process.env.STORAGE_DIR = "test-storage";
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 
 // Mock fix-path as a noop to prevent SIGSEGV (segfault)
 // Returns ESM-style default export for dynamic import()
@@ -45,17 +46,12 @@ describeRunner("FFMPEGWrapper", () => {
   it("should convert audio file to wav format", async () => {
     if (!fs.existsSync(testDir)) fs.mkdirSync(testDir, { recursive: true });
 
-    const sampleUrl =
-      "https://github.com/ringcentral/ringcentral-api-docs/blob/main/resources/sample1.wav?raw=true";
-
-    const response = await fetch(sampleUrl);
-    if (!response.ok)
-      throw new Error(
-        `Failed to download sample file: ${response.statusText}`
-      );
-
-    const buffer = await response.arrayBuffer();
-    fs.writeFileSync(inputPath, Buffer.from(buffer));
+    // Generate a synthetic stereo fixture; conversion must not depend on a
+    // third-party download being available during development or CI.
+    execFileSync(await ffmpeg.ffmpegPath(), [
+      "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=22050",
+      "-t", "0.1", "-ac", "2", "-c:a", "pcm_s16le", "-y", inputPath,
+    ], { stdio: "pipe" });
 
     const result = await ffmpeg.convertAudioToWav(inputPath, outputPath);
 

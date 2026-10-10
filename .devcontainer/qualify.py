@@ -150,7 +150,7 @@ test "$(readlink -f "$(command -v codex)")" != "$CODEX_HOME/codex"
         # A second checkout must not replace the first container or mutate its state.
         relocated = Path(tempfile.mkdtemp(prefix='native-renamed-'))
         workspaces.append(relocated)
-        shutil.copytree(root, relocated / (root.name + '-renamed'),
+        shutil.copytree(root, relocated / (root.name + '-renamed'), symlinks=True,
                         ignore=shutil.ignore_patterns('.git', 'node_modules', '.venv',
                                                      '__pycache__', '.next', 'dist'))
         root = relocated / (root.name + '-renamed')

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Plus, List } from "@phosphor-icons/react";
+import { List, Plus } from "@phosphor-icons/react";
 import NewWorkspaceModal, {
   useNewWorkspaceModal,
 } from "../Modals/NewWorkspace";
@@ -12,6 +12,9 @@ import { Link } from "react-router-dom";
 import paths from "@/utils/paths";
 import { useTranslation } from "react-i18next";
 import { useSidebarToggle, ToggleSidebarButton } from "./SidebarToggle";
+import SearchBox from "./SearchBox";
+import { Tooltip } from "react-tooltip";
+import { createPortal } from "react-dom";
 
 export default function Sidebar() {
   const { user } = useUser();
@@ -23,7 +26,6 @@ export default function Sidebar() {
     showModal: showNewWsModal,
     hideModal: hideNewWsModal,
   } = useNewWorkspaceModal();
-  const { t } = useTranslation();
 
   return (
     <>
@@ -32,57 +34,48 @@ export default function Sidebar() {
           width: showSidebar ? "292px" : "0px",
           paddingLeft: showSidebar ? "0px" : "16px",
         }}
-        className="transition-all duration-500"
+        className="relative transition-all duration-500"
       >
-        <div className="flex shrink-0 w-full justify-center my-[18px]">
-          <div className="flex justify-between w-[250px] min-w-[250px]">
-            <Link to={paths.home()} aria-label="Home">
-              <img
-                src={logo}
-                alt="Logo"
-                className={`rounded max-h-[24px] object-contain transition-opacity duration-500 ${showSidebar ? "opacity-100" : "opacity-0"}`}
-              />
-            </Link>
-            {canToggleSidebar && (
-              <ToggleSidebarButton
-                showSidebar={showSidebar}
-                setShowSidebar={setShowSidebar}
-              />
-            )}
+        {canToggleSidebar && (
+          <ToggleSidebarButton
+            showSidebar={showSidebar}
+            setShowSidebar={setShowSidebar}
+          />
+        )}
+        <div className="overflow-hidden h-full">
+          <div className="flex shrink-0 w-full justify-center my-[18px]">
+            <div className="flex w-[250px] min-w-[250px]">
+              <Link to={paths.home()} aria-label="Home">
+                <img
+                  src={logo}
+                  alt="Logo"
+                  className={`rounded max-h-[24px] object-contain transition-opacity duration-500 ${showSidebar ? "opacity-100" : "opacity-0"}`}
+                />
+              </Link>
+            </div>
           </div>
-        </div>
-        <div
-          ref={sidebarRef}
-          className="relative m-[16px] rounded-[16px] bg-theme-bg-sidebar border-[2px] border-theme-sidebar-border light:border-none min-w-[250px] p-[10px] h-[calc(100%-76px)]"
-        >
-          <div className="flex flex-col h-full overflow-x-hidden">
-            <div className="flex-grow flex flex-col min-w-[235px]">
-              <div className="relative h-[calc(100%-60px)] flex flex-col w-full justify-between pt-[10px] overflow-y-scroll no-scroll">
-                <div className="flex flex-col gap-y-2 pb-[60px] overflow-y-scroll no-scroll">
-                  <div className="flex gap-x-2 items-center justify-between">
-                    {(!user || user?.role !== "default") && (
-                      <button
-                        onClick={showNewWsModal}
-                        className="light:bg-[#C2E7FE] light:hover:bg-[#7CD4FD] flex flex-grow w-[75%] h-[44px] gap-x-2 py-[5px] px-2.5 mb-2 bg-white rounded-[8px] text-sidebar justify-center items-center hover:bg-opacity-80 transition-all duration-300"
-                      >
-                        <Plus size={18} weight="bold" />
-                        <p className="text-sidebar text-sm font-semibold">
-                          {t("new-workspace.title")}
-                        </p>
-                      </button>
-                    )}
+          <div
+            ref={sidebarRef}
+            className="relative m-[16px] rounded-[16px] bg-theme-bg-sidebar light:bg-slate-200 border-[2px] border-theme-sidebar-border light:border-none min-w-[250px] p-[10px] h-[calc(100%-76px)]"
+          >
+            <div className="flex flex-col h-full overflow-hidden">
+              <div className="flex-grow flex flex-col min-w-[235px] min-h-0">
+                <div className="relative h-[calc(100%-60px)] flex flex-col w-full justify-between pt-[10px] overflow-y-scroll no-scroll">
+                  <div className="flex flex-col gap-y-[14px]">
+                    <SearchBox user={user} showNewWsModal={showNewWsModal} />
+                    <ActiveWorkspaces />
                   </div>
-                  <ActiveWorkspaces />
                 </div>
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 pt-4 pb-3 rounded-b-[16px] bg-theme-bg-sidebar bg-opacity-80 backdrop-filter backdrop-blur-md z-1">
-                <Footer />
+                <div className="absolute bottom-0 left-0 right-0 pb-3 rounded-b-[16px] bg-theme-bg-sidebar light:bg-slate-200 bg-opacity-80 backdrop-filter backdrop-blur-md z-10">
+                  <Footer />
+                </div>
               </div>
             </div>
           </div>
         </div>
         {showingNewWsModal && <NewWorkspaceModal hideModal={hideNewWsModal} />}
       </div>
+      <WorkspaceAndThreadTooltips />
     </>
   );
 }
@@ -98,7 +91,6 @@ export function SidebarMobileHeader() {
     hideModal: hideNewWsModal,
   } = useNewWorkspaceModal();
   const { user } = useUser();
-  const { t } = useTranslation();
 
   useEffect(() => {
     // Darkens the rest of the screen
@@ -141,19 +133,19 @@ export function SidebarMobileHeader() {
         style={{
           transform: showSidebar ? `translateX(0vw)` : `translateX(-100vw)`,
         }}
-        className={`z-99 fixed top-0 left-0 transition-all duration-500 w-[100vw] h-[100vh]`}
+        className={`z-99 fixed top-0 left-0 transition-all duration-500 w-[100vw] h-[100vh] supports-[height:100dvh]:h-[100dvh]`}
       >
         <div
           className={`${
             showBgOverlay
               ? "transition-all opacity-1"
               : "transition-none opacity-0"
-          }  duration-500 fixed top-0 left-0 bg-theme-bg-secondary bg-opacity-75 w-screen h-screen`}
+          }  duration-500 fixed top-0 left-0 bg-theme-bg-secondary bg-opacity-75 w-screen h-[100vh] supports-[height:100dvh]:h-[100dvh]`}
           onClick={() => setShowSidebar(false)}
         />
         <div
           ref={sidebarRef}
-          className="relative h-[100vh] fixed top-0 left-0  rounded-r-[26px] bg-theme-bg-sidebar w-[80%] p-[18px] "
+          className="relative h-[100vh] supports-[height:100dvh]:h-[100dvh] fixed top-0 left-0  rounded-r-[26px] bg-theme-bg-sidebar w-[80%] p-[18px] "
         >
           <div className="w-full h-full flex flex-col overflow-x-hidden items-between">
             {/* Header Information */}
@@ -177,19 +169,10 @@ export function SidebarMobileHeader() {
             <div className="h-full flex flex-col w-full justify-between pt-4 ">
               <div className="h-auto md:sidebar-items">
                 <div className=" flex flex-col gap-y-4 overflow-y-scroll no-scroll pb-[60px]">
-                  <div className="flex gap-x-2 items-center justify-between">
-                    {(!user || user?.role !== "default") && (
-                      <button
-                        onClick={showNewWsModal}
-                        className="flex flex-grow w-[75%] h-[44px] gap-x-2 py-[5px] px-4 bg-white rounded-lg text-sidebar justify-center items-center hover:bg-opacity-80 transition-all duration-300"
-                      >
-                        <Plus className="h-5 w-5" />
-                        <p className="text-sidebar text-sm font-semibold">
-                          {t("new-workspace.title")}
-                        </p>
-                      </button>
-                    )}
-                  </div>
+                  <NewWorkspaceButton
+                    user={user}
+                    showNewWsModal={showNewWsModal}
+                  />
                   <ActiveWorkspaces />
                 </div>
               </div>
@@ -202,5 +185,56 @@ export function SidebarMobileHeader() {
         {showingNewWsModal && <NewWorkspaceModal hideModal={hideNewWsModal} />}
       </div>
     </>
+  );
+}
+
+function NewWorkspaceButton({ user, showNewWsModal }) {
+  const { t } = useTranslation();
+  if (!!user && user?.role === "default") return null;
+
+  return (
+    <div className="flex gap-x-2 items-center justify-between">
+      <button
+        onClick={showNewWsModal}
+        className="flex flex-grow w-[75%] h-[44px] gap-x-2 py-[5px] px-4 bg-white rounded-lg text-sidebar justify-center items-center hover:bg-opacity-80 transition-all duration-300"
+      >
+        <Plus className="h-5 w-5" />
+        <p className="text-sidebar text-sm font-semibold">
+          {t("new-workspace.title")}
+        </p>
+      </button>
+    </div>
+  );
+}
+
+function WorkspaceAndThreadTooltips() {
+  return createPortal(
+    <React.Fragment>
+      <Tooltip
+        id="workspace-name"
+        place="right"
+        delayShow={800}
+        className="tooltip !text-xs z-99"
+      />
+      <Tooltip
+        id="workspace-thread-name"
+        place="right"
+        delayShow={800}
+        className="tooltip !text-xs z-99"
+      />
+      <Tooltip
+        id="upload-workspace"
+        place="top"
+        delayShow={300}
+        className="tooltip !text-xs z-99"
+      />
+      <Tooltip
+        id="gear-workspace"
+        place="top"
+        delayShow={300}
+        className="tooltip !text-xs z-99"
+      />
+    </React.Fragment>,
+    document.body
   );
 }

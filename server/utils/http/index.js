@@ -16,14 +16,26 @@ function queryParams(request) {
   return request.query;
 }
 
+/**
+ * Creates a JWT with the given info and expiry
+ * @param {object} info - The info to include in the JWT
+ * @param {string} expiry - The expiry time for the JWT (default: 30 days)
+ * @returns {string} The JWT
+ */
 function makeJWT(info = {}, expiry = "30d") {
   if (!process.env.JWT_SECRET)
     throw new Error("Cannot create JWT as JWT_SECRET is unset.");
   return JWT.sign(info, process.env.JWT_SECRET, { expiresIn: expiry });
 }
 
-// Note: Only valid for finding users in multi-user mode
-// as single-user mode with password is not a "user"
+/**
+ * Gets the user from the session
+ * Note: Only valid for multi-user mode
+ * as single-user mode with password is not a "user"
+ * @param {import("express").Request} request - The request object
+ * @param {import("express").Response} response - The response object
+ * @returns {Promise<import("@prisma/client").users | null>} The user
+ */
 async function userFromSession(request, response = null) {
   if (!!response && !!response.locals?.user) {
     return response.locals.user;
@@ -89,13 +101,29 @@ function isValidUrl(urlString = "") {
     const url = new URL(urlString);
     if (!["http:", "https:"].includes(url.protocol)) return false;
     return true;
-  } catch (e) {}
+  } catch {}
   return false;
 }
 
 function toValidNumber(number = null, fallback = null) {
   if (isNaN(Number(number))) return fallback;
   return Number(number);
+}
+
+/**
+ * Decode HTML entities from a string.
+ * The DMR response is encoded with HTML entities, so we need to decode them
+ * so we can parse the JSON and report the progress percentage.
+ * @param {string} str - The string to decode.
+ * @returns {string} The decoded string.
+ */
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&#34;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 module.exports = {
@@ -109,4 +137,5 @@ module.exports = {
   safeJsonParse,
   isValidUrl,
   toValidNumber,
+  decodeHtmlEntities,
 };

@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import System from "@/models/system";
-import { Warning } from "@phosphor-icons/react";
+import { Warning, Info } from "@phosphor-icons/react";
 import { Tooltip } from "react-tooltip";
 
 export default function LiteLLMOptions({ settings }) {
   const [basePathValue, setBasePathValue] = useState(settings?.LiteLLMBasePath);
   const [basePath, setBasePath] = useState(settings?.LiteLLMBasePath);
-  const [apiKeyValue, setApiKeyValue] = useState(settings?.LiteLLMAPIKey);
-  const [apiKey, setApiKey] = useState(settings?.LiteLLMAPIKey);
+  const [apiKeyValue, setApiKeyValue] = useState(settings?.LiteLLMApiKey);
+  const [apiKey, setApiKey] = useState(settings?.LiteLLMApiKey);
 
   return (
     <div className="w-full flex flex-col gap-y-7">
@@ -35,9 +35,22 @@ export default function LiteLLMOptions({ settings }) {
           apiKey={apiKey}
         />
         <div className="flex flex-col w-60">
-          <label className="text-white text-sm font-semibold block mb-3">
-            Max embedding chunk length
-          </label>
+          <div
+            data-tooltip-place="top"
+            data-tooltip-id="max-embedding-chunk-length-tooltip"
+            className="flex gap-x-1 items-center mb-3"
+          >
+            <Info
+              size={16}
+              className="text-theme-text-secondary cursor-pointer"
+            />
+            <label className="text-white text-sm font-semibold block">
+              Max embedding chunk length
+            </label>
+            <Tooltip id="max-embedding-chunk-length-tooltip">
+              Maximum length of text chunks, in characters, for embedding.
+            </Tooltip>
+          </div>
           <input
             type="number"
             name="EmbeddingModelMaxChunkLength"
@@ -60,10 +73,10 @@ export default function LiteLLMOptions({ settings }) {
           </div>
           <input
             type="password"
-            name="LiteLLMAPIKey"
+            name="LiteLLMApiKey"
             className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
             placeholder="sk-mysecretkey"
-            defaultValue={settings?.LiteLLMAPIKey ? "*".repeat(20) : ""}
+            defaultValue={settings?.LiteLLMApiKey ? "*".repeat(20) : ""}
             autoComplete="off"
             spellCheck={false}
             onChange={(e) => setApiKeyValue(e.target.value)}

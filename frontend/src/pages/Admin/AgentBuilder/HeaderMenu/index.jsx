@@ -10,6 +10,7 @@ export default function HeaderMenu({
   availableFlows = [],
   onNewFlow,
   onSaveFlow,
+  onPublishFlow,
 }) {
   const { flowId = null } = useParams();
   const [showDropdown, setShowDropdown] = useState(false);
@@ -92,9 +93,9 @@ export default function HeaderMenu({
                 <div className="absolute top-full left-0 mt-1 w-full min-w-[200px] max-w-[350px] bg-theme-settings-input-bg border border-white/10 rounded-md shadow-lg z-50 animate-fadeUpIn">
                   {availableFlows
                     .filter((flow) => flow.uuid !== flowId)
-                    .map((flow) => (
+                    .map((flow, index) => (
                       <button
-                        key={flow?.uuid || Math.random()}
+                        key={flow?.uuid || `flow-${index}`}
                         onClick={() => {
                           navigate(paths.agents.editAgent(flow.uuid));
                           setShowDropdown(false);
@@ -120,6 +121,12 @@ export default function HeaderMenu({
             >
               <Plus className="w-4 h-4" />
               New Flow
+            </button>
+            <button
+              onClick={onPublishFlow}
+              className="px-3 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-white/10 bg-theme-bg-primary text-theme-text-primary hover:bg-theme-action-menu-bg transition-all duration-300"
+            >
+              Publish
             </button>
             <button
               onClick={onSaveFlow}

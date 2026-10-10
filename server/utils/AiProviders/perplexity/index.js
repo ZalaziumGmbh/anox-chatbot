@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require("uuid");
 const { NativeEmbedder } = require("../../EmbeddingEngines/native");
+const { isAbortError } = require("../../helpers/abortSignals");
 const {
   writeResponseChunk,
   clientAbortedHandler,
@@ -7,6 +8,10 @@ const {
 const {
   LLMPerformanceMonitor,
 } = require("../../helpers/chat/LLMPerformanceMonitor");
+const { getAnythingLLMUserAgent } = require("../../../endpoints/utils");
+const {
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
 
 function perplexityModels() {
   const { MODELS } = require("./models.js");
@@ -18,10 +23,14 @@ class PerplexityLLM {
     if (!process.env.PERPLEXITY_API_KEY)
       throw new Error("No Perplexity API key was set.");
 
+    this.className = "PerplexityLLM";
     const { OpenAI: OpenAIApi } = require("openai");
     this.openai = new OpenAIApi({
       baseURL: "https://api.perplexity.ai",
       apiKey: process.env.PERPLEXITY_API_KEY ?? null,
+      defaultHeaders: {
+        "X-Pplx-Integration": getAnythingLLMUserAgent(),
+      },
     });
     this.model =
       modelPreference ||
@@ -34,7 +43,6 @@ class PerplexityLLM {
     };
 
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
   }
 
   #appendContext(contextTexts = []) {
@@ -85,7 +93,10 @@ class PerplexityLLM {
     return [prompt, ...chatHistory, { role: "user", content: userPrompt }];
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
     if (!(await this.isValidChatCompletionModel(this.model)))
       throw new Error(
         `Perplexity chat: ${this.model} is not valid for chat completion!`
@@ -96,7 +107,7 @@ class PerplexityLLM {
         .create({
           model: this.model,
           messages,
-          temperature,
+          ...temperatureParam(temperature),
         })
         .catch((e) => {
           throw new Error(e.message);
@@ -117,38 +128,51 @@ class PerplexityLLM {
         total_tokens: result.output.usage?.total_tokens || 0,
         outputTps: result.output.usage?.completion_tokens / result.duration,
         duration: result.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
     if (!(await this.isValidChatCompletionModel(this.model)))
       throw new Error(
         `Perplexity chat: ${this.model} is not valid for chat completion!`
       );
 
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.openai.chat.completions.create({
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: this.openai.chat.completions.create({
         model: this.model,
         stream: true,
         messages,
-        temperature,
+        ...temperatureParam(temperature),
       }),
-      messages
-    );
+      messages,
+      runPromptTokenCalculation: true,
+      modelTag: this.model,
+      provider: this.className,
+    });
     return measuredStreamRequest;
   }
 
+  /**
+   * Enrich a token with citations if available for in-line citations.
+   * @param {string} token - The token to enrich.
+   * @param {Array} citations - The citations to enrich the token with.
+   * @returns {string} The enriched token.
+   */
   enrichToken(token, citations) {
-    if (Array.isArray(citations) && citations.length !== 0) {
-      return token.replace(/\[(\d+)\]/g, (match, index) => {
-        const citationIndex = parseInt(index) - 1;
-        return citations[citationIndex]
-          ? `[[${index}](${citations[citationIndex]})]`
-          : match;
-      });
-    }
-    return token;
+    if (!Array.isArray(citations) || citations.length === 0) return token;
+    return token.replace(/\[(\d+)\]/g, (match, index) => {
+      const citationIndex = parseInt(index) - 1;
+      return citations[citationIndex]
+        ? `[[${index}](${citations[citationIndex]})]`
+        : match;
+    });
   }
 
   handleStream(response, stream, responseProps) {
@@ -256,6 +280,12 @@ class PerplexityLLM {
           }
         }
       } catch (e) {
+        // Cancelling the upstream request rejects the iterator - that is the
+        // client leaving, not a failure, so it is not reported as an error.
+        if (isAbortError(e)) {
+          stream?.endMeasurement(usage);
+          return clientAbortedHandler(resolve, fullText);
+        }
         console.log(`\x1b[43m\x1b[34m[STREAMING ERROR]\x1b[0m ${e.message}`);
         writeResponseChunk(response, {
           uuid,

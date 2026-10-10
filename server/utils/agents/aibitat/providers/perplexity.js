@@ -1,7 +1,9 @@
 const OpenAI = require("openai");
 const Provider = require("./ai-provider.js");
+const { temperatureParam } = require("./helpers/tooled.js");
 const InheritMultiple = require("./helpers/classes.js");
 const UnTooled = require("./helpers/untooled.js");
+const { getAnythingLLMUserAgent } = require("../../../../endpoints/utils");
 
 /**
  * The agent provider for the Perplexity provider.
@@ -15,9 +17,12 @@ class PerplexityProvider extends InheritMultiple([Provider, UnTooled]) {
     const client = new OpenAI({
       baseURL: "https://api.perplexity.ai",
       apiKey: process.env.PERPLEXITY_API_KEY ?? null,
-      maxRetries: 3,
+      defaultHeaders: {
+        "X-Pplx-Integration": getAnythingLLMUserAgent(),
+      },
     });
 
+    this.providerTag = "perplexity";
     this._client = client;
     this.model = model;
     this.verbose = true;
@@ -27,11 +32,26 @@ class PerplexityProvider extends InheritMultiple([Provider, UnTooled]) {
     return this._client;
   }
 
+  get supportsAgentStreaming() {
+    return true;
+  }
+
+  /**
+   * Whether this provider supports native OpenAI-compatible tool calling.
+   * - Perplexity does not support tool calling at all and does not have API support for it.
+   * so until that changes we will use Untooled to get at least a general agentic experience with
+   * our tools.
+   * @returns {boolean}
+   */
+  async supportsNativeToolCalling() {
+    return false;
+  }
+
   async #handleFunctionCallChat({ messages = [] }) {
     return await this.client.chat.completions
       .create({
         model: this.model,
-        temperature: 0,
+        ...temperatureParam(this.temperature),
         messages,
       })
       .then((result) => {
@@ -46,60 +66,32 @@ class PerplexityProvider extends InheritMultiple([Provider, UnTooled]) {
       });
   }
 
-  /**
-   * Create a completion based on the received messages.
-   *
-   * @param messages A list of messages to send to the API.
-   * @param functions
-   * @returns The completion.
-   */
+  async #handleFunctionCallStream({ messages = [] }) {
+    return await this.client.chat.completions.create({
+      model: this.model,
+      ...temperatureParam(this.temperature),
+      stream: true,
+      messages,
+    });
+  }
+
+  async stream(messages, functions = [], eventHandler = null) {
+    return await UnTooled.prototype.stream.call(
+      this,
+      messages,
+      functions,
+      this.#handleFunctionCallStream.bind(this),
+      eventHandler
+    );
+  }
+
   async complete(messages, functions = []) {
-    try {
-      let completion;
-      if (functions.length > 0) {
-        const { toolCall, text } = await this.functionCall(
-          messages,
-          functions,
-          this.#handleFunctionCallChat.bind(this)
-        );
-
-        if (toolCall !== null) {
-          this.providerLog(`Valid tool call found - running ${toolCall.name}.`);
-          this.deduplicator.trackRun(toolCall.name, toolCall.arguments);
-          return {
-            result: null,
-            functionCall: {
-              name: toolCall.name,
-              arguments: toolCall.arguments,
-            },
-            cost: 0,
-          };
-        }
-        completion = { content: text };
-      }
-
-      if (!completion?.content) {
-        this.providerLog(
-          "Will assume chat completion without tool call inputs."
-        );
-        const response = await this.client.chat.completions.create({
-          model: this.model,
-          messages: this.cleanMsgs(messages),
-        });
-        completion = response.choices[0].message;
-      }
-
-      // The UnTooled class inherited Deduplicator is mostly useful to prevent the agent
-      // from calling the exact same function over and over in a loop within a single chat exchange
-      // _but_ we should enable it to call previously used tools in a new chat interaction.
-      this.deduplicator.reset("runs");
-      return {
-        result: completion.content,
-        cost: 0,
-      };
-    } catch (error) {
-      throw error;
-    }
+    return await UnTooled.prototype.complete.call(
+      this,
+      messages,
+      functions,
+      this.#handleFunctionCallChat.bind(this)
+    );
   }
 
   /**

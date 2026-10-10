@@ -3,6 +3,25 @@ const path = require("path");
 const { MimeDetector } = require("./mime");
 
 /**
+ * The folder where documents are stored to be stored when
+ * processed by the collector.
+ */
+const documentsFolder =
+  process.env.NODE_ENV === "development"
+    ? path.resolve(__dirname, `../../../server/storage/documents`)
+    : path.resolve(process.env.STORAGE_DIR, `documents`);
+
+/**
+ * The folder where direct uploads are stored to be stored when
+ * processed by the collector. These are files that were DnD'd into UI
+ * and are not to be embedded or selectable from the file picker.
+ */
+const directUploadsFolder =
+  process.env.NODE_ENV === "development"
+    ? path.resolve(__dirname, `../../../server/storage/direct-uploads`)
+    : path.resolve(process.env.STORAGE_DIR, `direct-uploads`);
+
+/**
  * Checks if a file is text by checking the mime type and then falling back to buffer inspection.
  * This way we can capture all the cases where the mime type is not known but still parseable as text
  * without having to constantly add new mime type overrides.
@@ -33,7 +52,7 @@ function isKnownTextMime(filepath) {
     if (mimeLib.nonTextTypes.includes(type))
       return { valid: false, reason: "non_text_mime" };
     return { valid: true, reason: "valid_mime" };
-  } catch (e) {
+  } catch {
     return { valid: false, reason: "generic" };
   }
 }
@@ -53,6 +72,7 @@ function parseableAsText(filepath) {
 
     const content = buffer.subarray(0, bytesRead).toString("utf8");
     const nullCount = (content.match(/\0/g) || []).length;
+    //eslint-disable-next-line
     const controlCount = (content.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) || [])
       .length;
 
@@ -87,20 +107,35 @@ function createdDate(filepath) {
   }
 }
 
-function writeToServerDocuments(
+/**
+ * Writes a document to the server documents folder.
+ * @param {Object} params - The parameters for the function.
+ * @param {Object} params.data - The data to write to the file. Must look like a document object.
+ * @param {string} params.filename - The name of the file to write to.
+ * @param {string|null} params.destinationOverride - A forced destination to write to - will be honored if provided.
+ * @param {Object} params.options - The options for the function.
+ * @param {boolean} params.options.parseOnly - If true, the file will be written to the direct uploads folder instead of the documents folder. Will be ignored if destinationOverride is provided.
+ * @returns {Object} - The data with the location added.
+ */
+function writeToServerDocuments({
   data = {},
   filename,
-  destinationOverride = null
-) {
-  const destination = destinationOverride
-    ? path.resolve(destinationOverride)
-    : path.resolve(
-        __dirname,
-        "../../../server/storage/documents/custom-documents"
-      );
+  destinationOverride = null,
+  options = {},
+}) {
+  if (!filename) throw new Error("Filename is required!");
+
+  let destination = null;
+  if (destinationOverride) destination = path.resolve(destinationOverride);
+  else if (options.parseOnly) destination = path.resolve(directUploadsFolder);
+  else destination = path.resolve(documentsFolder, "custom-documents");
+
   if (!fs.existsSync(destination))
     fs.mkdirSync(destination, { recursive: true });
-  const destinationFilePath = path.resolve(destination, filename) + ".json";
+  const safeFilename = sanitizeFileName(filename);
+  const destinationFilePath = normalizePath(
+    path.resolve(destination, safeFilename) + ".json"
+  );
 
   fs.writeFileSync(destinationFilePath, JSON.stringify(data, null, 4), {
     encoding: "utf-8",
@@ -112,6 +147,7 @@ function writeToServerDocuments(
     // that will work since we know the location exists and since we only allow
     // 1-level deep folders this will always work. This still works for integrations like GitHub and YouTube.
     location: destinationFilePath.split("/").slice(-2).join("/"),
+    isDirectUpload: options.parseOnly || false,
   };
 }
 
@@ -121,6 +157,8 @@ function writeToServerDocuments(
 async function wipeCollectorStorage() {
   const cleanHotDir = new Promise((resolve) => {
     const directory = path.resolve(__dirname, "../../hotdir");
+
+    if (!fs.existsSync(directory)) resolve();
     fs.readdir(directory, (err, files) => {
       if (err) resolve();
 
@@ -155,15 +193,27 @@ async function wipeCollectorStorage() {
 }
 
 /**
- * Checks if a given path is within another path.
- * @param {string} outer - The outer path (should be resolved).
- * @param {string} inner - The inner path (should be resolved).
- * @returns {boolean} - Returns true if the inner path is within the outer path, false otherwise.
+ * Checks if a given path is strictly within another path. Used to prevent
+ * path-traversal attacks (CWE-22). Both arguments are resolved to absolute
+ * paths internally so callers do not need to pre-resolve.
+ *
+ * NOTE: This function does NOT follow or detect symlinks. A symlink inside
+ * `outer` that points outside it will not be caught here — validate symlinks
+ * separately at read/write time if your threat model requires it (wontfix).
+ *
+ * @param {string} outer - The containing directory path.
+ * @param {string} inner - The path to test.
+ * @returns {boolean} True if `inner` is strictly inside `outer`, false otherwise.
  */
 function isWithin(outer, inner) {
-  if (outer === inner) return false;
-  const rel = path.relative(outer, inner);
-  return !rel.startsWith("../") && rel !== "..";
+  const resolvedOuter = path.resolve(outer);
+  const resolvedInner = path.resolve(inner);
+  const rel = path.relative(resolvedOuter, resolvedInner);
+
+  if (rel === "") return false;
+  return (
+    !rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel)
+  );
 }
 
 function normalizePath(filepath = "") {
@@ -175,9 +225,19 @@ function normalizePath(filepath = "") {
   return result;
 }
 
+/**
+ * Strips characters that are illegal in Windows filenames, including Unicode
+ * quotation marks (U+201C, U+201D, etc.) that can get corrupted into ASCII
+ * double-quotes during charset conversion in the upload pipeline.
+ * @param {string} fileName - The filename to sanitize.
+ * @returns {string} - The sanitized filename.
+ */
 function sanitizeFileName(fileName) {
   if (!fileName) return fileName;
-  return fileName.replace(/[<>:"\/\\|?*]/g, "");
+  return fileName.replace(
+    /[<>:"/\\|?*\u201C\u201D\u201E\u201F\u2018\u2019\u201A\u201B]/g,
+    ""
+  );
 }
 
 module.exports = {
@@ -189,4 +249,6 @@ module.exports = {
   normalizePath,
   isWithin,
   sanitizeFileName,
+  documentsFolder,
+  directUploadsFolder,
 };

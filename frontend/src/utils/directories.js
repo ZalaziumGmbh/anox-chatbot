@@ -1,14 +1,19 @@
-export function formatDate(dateString) {
-  const date = isNaN(new Date(dateString).getTime())
-    ? new Date()
-    : new Date(dateString);
-  const options = { year: "numeric", month: "short", day: "numeric" };
-  const formattedDate = date.toLocaleDateString("en-US", options);
-  return formattedDate;
+import moment from "moment";
+
+export function formatDateTimeAsMoment(dateString, format = "LLL") {
+  if (!dateString) return moment().format(format);
+  try {
+    return moment(dateString).format(format);
+  } catch {
+    return moment().format(format);
+  }
 }
 
 export function getFileExtension(path) {
-  return path?.split(".")?.slice(-1)?.[0] || "file";
+  const hasExtension = path?.includes(".");
+  if (!hasExtension) return "FILE";
+  const extension = path?.split(".")?.slice(-1)?.[0];
+  return extension?.toUpperCase() || "FILE";
 }
 
 export function middleTruncate(str, n) {

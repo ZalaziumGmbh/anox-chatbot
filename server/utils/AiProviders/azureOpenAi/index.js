@@ -1,30 +1,38 @@
 const { NativeEmbedder } = require("../../EmbeddingEngines/native");
 const {
+  formatChatHistory,
+  handleDefaultStreamResponseV2,
+} = require("../../helpers/chat/responses");
+const {
   LLMPerformanceMonitor,
 } = require("../../helpers/chat/LLMPerformanceMonitor");
 const {
-  writeResponseChunk,
-  clientAbortedHandler,
-  formatChatHistory,
-} = require("../../helpers/chat/responses");
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
 
 class AzureOpenAiLLM {
   constructor(embedder = null, modelPreference = null) {
-    const { OpenAIClient, AzureKeyCredential } = require("@azure/openai");
+    const { OpenAI } = require("openai");
     if (!process.env.AZURE_OPENAI_ENDPOINT)
       throw new Error("No Azure API endpoint was set.");
     if (!process.env.AZURE_OPENAI_KEY)
       throw new Error("No Azure API key was set.");
 
-    this.apiVersion = "2024-12-01-preview";
-    this.openai = new OpenAIClient(
-      process.env.AZURE_OPENAI_ENDPOINT,
-      new AzureKeyCredential(process.env.AZURE_OPENAI_KEY),
-      {
-        apiVersion: this.apiVersion,
-      }
-    );
-    this.model = modelPreference ?? process.env.OPEN_MODEL_PREF;
+    this.className = "AzureOpenAiLLM";
+    this.openai = new OpenAI({
+      apiKey: process.env.AZURE_OPENAI_KEY,
+      baseURL: AzureOpenAiLLM.formatBaseUrl(process.env.AZURE_OPENAI_ENDPOINT),
+    });
+    this.model =
+      modelPreference ||
+      process.env.AZURE_OPENAI_MODEL_PREF ||
+      process.env.OPEN_MODEL_PREF;
+    /* 
+      Note: Azure OpenAI deployments do not expose model metadata that would allow us to
+      programmatically detect whether the deployment uses a reasoning model (o1, o1-mini, o3-mini, etc.).
+      As a result, we rely on the user to explicitly set AZURE_OPENAI_MODEL_TYPE="reasoning"
+      when using reasoning models, as incorrect configuration might result in chat errors.
+    */
     this.isOTypeModel =
       process.env.AZURE_OPENAI_MODEL_TYPE === "reasoning" || false;
     this.limits = {
@@ -34,10 +42,38 @@ class AzureOpenAiLLM {
     };
 
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
     this.#log(
       `Initialized. Model "${this.model}" @ ${this.promptWindowLimit()} tokens.\nAPI-Version: ${this.apiVersion}.\nModel Type: ${this.isOTypeModel ? "reasoning" : "default"}`
     );
+  }
+
+  /**
+   * Formats the Azure OpenAI endpoint URL to the correct format.
+   * @param {string} azureOpenAiEndpoint - The Azure OpenAI endpoint URL.
+   * @returns {string} The formatted URL.
+   */
+  static formatBaseUrl(azureOpenAiEndpoint) {
+    try {
+      const url = new URL(azureOpenAiEndpoint);
+      url.pathname = "/openai/v1";
+      url.protocol = "https";
+      url.search = "";
+      url.hash = "";
+      return url.href;
+    } catch {
+      throw new Error(
+        `"${azureOpenAiEndpoint}" is not a valid URL. Check your settings for the Azure OpenAI provider and set a valid endpoint URL.`
+      );
+    }
+  }
+
+  /**
+   * Whether the deployment supports the temperature parameter. Azure does not
+   * expose model metadata, so this relies on the user-declared AZURE_OPENAI_MODEL_TYPE.
+   * @returns {boolean}
+   */
+  static modelSupportsTemperature() {
+    return process.env.AZURE_OPENAI_MODEL_TYPE !== "reasoning";
   }
 
   #log(text, ...args) {
@@ -57,13 +93,6 @@ class AzureOpenAiLLM {
   }
 
   streamingEnabled() {
-    // Streaming of reasoning models is not supported
-    if (this.isOTypeModel) {
-      this.#log(
-        "Streaming will be disabled. AZURE_OPENAI_MODEL_TYPE is set to 'reasoning'."
-      );
-      return false;
-    }
     return "streamGetChatCompletion" in this;
   }
 
@@ -103,7 +132,7 @@ class AzureOpenAiLLM {
     for (let attachment of attachments) {
       content.push({
         type: "image_url",
-        imageUrl: {
+        image_url: {
           url: attachment.contentString,
         },
       });
@@ -132,15 +161,20 @@ class AzureOpenAiLLM {
     ];
   }
 
-  async getChatCompletion(messages = [], { temperature = 0.7 }) {
+  async getChatCompletion(
+    messages = [],
+    { temperature = this.temperature } = {}
+  ) {
     if (!this.model)
       throw new Error(
-        "No OPEN_MODEL_PREF ENV defined. This must the name of a deployment on your Azure account for an LLM chat model like GPT-3.5."
+        "No AZURE_OPENAI_MODEL_PREF ENV defined. This must the name of a deployment on your Azure account for an LLM chat model like GPT-3.5."
       );
 
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
-      this.openai.getChatCompletions(this.model, messages, {
-        ...(this.isOTypeModel ? {} : { temperature }),
+      this.openai.chat.completions.create({
+        messages,
+        model: this.model,
+        ...(this.isOTypeModel ? {} : temperatureParam(temperature)),
       })
     );
 
@@ -153,90 +187,46 @@ class AzureOpenAiLLM {
     return {
       textResponse: result.output.choices[0].message.content,
       metrics: {
-        prompt_tokens: result.output.usage.promptTokens || 0,
-        completion_tokens: result.output.usage.completionTokens || 0,
-        total_tokens: result.output.usage.totalTokens || 0,
-        outputTps: result.output.usage.completionTokens / result.duration,
+        prompt_tokens: result.output.usage.prompt_tokens || 0,
+        completion_tokens: result.output.usage.completion_tokens || 0,
+        total_tokens: result.output.usage.total_tokens || 0,
+        outputTps: result.output.usage.completion_tokens / result.duration,
         duration: result.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = [], { temperature = 0.7 }) {
+  async streamGetChatCompletion(
+    messages = [],
+    { temperature = this.temperature } = {}
+  ) {
     if (!this.model)
       throw new Error(
-        "No OPEN_MODEL_PREF ENV defined. This must the name of a deployment on your Azure account for an LLM chat model like GPT-3.5."
+        "No AZURE_OPENAI_MODEL_PREF ENV defined. This must the name of a deployment on your Azure account for an LLM chat model like GPT-3.5."
       );
 
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      await this.openai.streamChatCompletions(this.model, messages, {
-        ...(this.isOTypeModel ? {} : { temperature }),
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: await this.openai.chat.completions.create({
+        messages,
+        model: this.model,
+        ...(this.isOTypeModel ? {} : temperatureParam(temperature)),
         n: 1,
+        stream: true,
       }),
-      messages
-    );
+      messages,
+      runPromptTokenCalculation: true,
+      modelTag: this.model,
+      provider: this.className,
+    });
 
     return measuredStreamRequest;
   }
 
-  /**
-   * Handles the stream response from the AzureOpenAI API.
-   * Azure does not return the usage metrics in the stream response, but 1msg = 1token
-   * so we can estimate the completion tokens by counting the number of messages.
-   * @param {Object} response - the response object
-   * @param {import('../../helpers/chat/LLMPerformanceMonitor').MonitoredStream} stream - the stream response from the AzureOpenAI API w/tracking
-   * @param {Object} responseProps - the response properties
-   * @returns {Promise<string>}
-   */
   handleStream(response, stream, responseProps) {
-    const { uuid = uuidv4(), sources = [] } = responseProps;
-
-    return new Promise(async (resolve) => {
-      let fullText = "";
-      let usage = {
-        completion_tokens: 0,
-      };
-
-      // Establish listener to early-abort a streaming response
-      // in case things go sideways or the user does not like the response.
-      // We preserve the generated text but continue as if chat was completed
-      // to preserve previously generated content.
-      const handleAbort = () => {
-        stream?.endMeasurement(usage);
-        clientAbortedHandler(resolve, fullText);
-      };
-      response.on("close", handleAbort);
-
-      for await (const event of stream) {
-        for (const choice of event.choices) {
-          const delta = choice.delta?.content;
-          if (!delta) continue;
-          fullText += delta;
-          usage.completion_tokens++;
-
-          writeResponseChunk(response, {
-            uuid,
-            sources: [],
-            type: "textResponseChunk",
-            textResponse: delta,
-            close: false,
-            error: false,
-          });
-        }
-      }
-
-      writeResponseChunk(response, {
-        uuid,
-        sources,
-        type: "textResponseChunk",
-        textResponse: "",
-        close: true,
-        error: false,
-      });
-      response.removeListener("close", handleAbort);
-      stream?.endMeasurement(usage);
-      resolve(fullText);
-    });
+    return handleDefaultStreamResponseV2(response, stream, responseProps);
   }
 
   // Simple wrapper for dynamic embedder & normalize interface for all LLM implementations

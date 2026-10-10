@@ -1,5 +1,8 @@
 const { parseLMStudioBasePath } = require("../../AiProviders/lmStudio");
-const { maximumChunkLength } = require("../../helpers");
+const {
+  maximumChunkLength,
+  reportEmbeddingProgress,
+} = require("../../helpers");
 
 class LMStudioEmbedder {
   constructor() {
@@ -8,10 +11,12 @@ class LMStudioEmbedder {
     if (!process.env.EMBEDDING_MODEL_PREF)
       throw new Error("No embedding model was set.");
 
+    const apiKey = process.env.LMSTUDIO_AUTH_TOKEN ?? null;
+    this.className = "LMStudioEmbedder";
     const { OpenAI: OpenAIApi } = require("openai");
     this.lmstudio = new OpenAIApi({
       baseURL: parseLMStudioBasePath(process.env.EMBEDDING_BASE_PATH),
-      apiKey: null,
+      apiKey,
     });
     this.model = process.env.EMBEDDING_MODEL_PREF;
 
@@ -21,7 +26,7 @@ class LMStudioEmbedder {
   }
 
   log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   async #isAlive() {
@@ -56,13 +61,14 @@ class LMStudioEmbedder {
     // get dropped or go unanswered >:(
     let results = [];
     let hasError = false;
-    for (const chunk of textChunks) {
-      if (hasError) break; // If an error occurred don't continue and exit early.
+    for (const [idx, chunk] of textChunks.entries()) {
+      if (hasError) break;
       results.push(
         await this.lmstudio.embeddings
           .create({
             model: this.model,
             input: chunk,
+            encoding_format: "base64",
           })
           .then((result) => {
             const embedding = result.data?.[0]?.embedding;
@@ -71,7 +77,7 @@ class LMStudioEmbedder {
                 type: "EMPTY_ARR",
                 message: "The embedding was empty from LMStudio",
               };
-            console.log(`Embedding length: ${embedding.length}`);
+            reportEmbeddingProgress(idx + 1, textChunks.length);
             return { data: embedding, error: null };
           })
           .catch((e) => {

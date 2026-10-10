@@ -1,4 +1,5 @@
 const ignore = require("ignore");
+const MAX_RETRIES = 3;
 
 /**
  * @typedef {Object} RepoLoaderArgs
@@ -7,6 +8,7 @@ const ignore = require("ignore");
  * @property {string} [accessToken] - GitLab access token for authentication (optional).
  * @property {string[]} [ignorePaths] - Array of paths to ignore when loading (optional).
  * @property {boolean} [fetchIssues] - Should issues be fetched (optional).
+ * @property {boolean} [fetchWikis] - Should wiki be fetched (optional).
  */
 
 /**
@@ -36,6 +38,7 @@ class GitLabRepoLoader {
     this.ignorePaths = args?.ignorePaths || [];
     this.ignoreFilter = ignore().add(this.ignorePaths);
     this.withIssues = args?.fetchIssues || false;
+    this.withWikis = args?.fetchWikis || false;
 
     this.projectId = null;
     this.apiBase = "https://gitlab.com";
@@ -44,12 +47,18 @@ class GitLabRepoLoader {
     this.branches = [];
   }
 
+  #wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   #validGitlabUrl() {
     const validPatterns = [
+      //eslint-disable-next-line
       /https:\/\/gitlab\.com\/(?<author>[^\/]+)\/(?<project>.*)/,
       // This should even match the regular hosted URL, but we may want to know
       // if this was a hosted GitLab (above) or a self-hosted (below) instance
       // since the API interface could be different.
+      //eslint-disable-next-line
       /(http|https):\/\/[^\/]+\/(?<author>[^\/]+)\/(?<project>.*)/,
     ];
 
@@ -59,10 +68,25 @@ class GitLabRepoLoader {
     if (!match?.groups) return false;
 
     const { author, project } = match.groups;
-    this.projectId = encodeURIComponent(`${author}/${project}`);
-    this.apiBase = new URL(this.repo).origin;
+    // GitLab puts the reserved `/-/` segment between a project path and its views (eg: `/-/tree/main`)
+    // and forbids a project path that ends in `.git`, so the repository is everything before either.
+    // A trailing slash is not part of the path. Sub-groups (`group/sub/project`) are preserved.
+    const segments = project.replace(/[?#].*$/, "").split("/");
+    const separator = segments.indexOf("-");
+    const projectPath = (
+      separator === -1 ? segments : segments.slice(0, separator)
+    )
+      .filter(Boolean)
+      .join("/")
+      .replace(/\.git$/, "");
+    if (!projectPath) return false;
+
+    const { origin } = new URL(this.repo);
+    this.repo = `${origin}/${author}/${projectPath}`;
+    this.projectId = encodeURIComponent(`${author}/${projectPath}`);
+    this.apiBase = origin;
     this.author = author;
-    this.project = project;
+    this.project = projectPath;
     return true;
   }
 
@@ -84,7 +108,9 @@ class GitLabRepoLoader {
       await fetch(`${this.apiBase}/api/v4/user`, {
         method: "GET",
         headers: this.accessToken ? { "PRIVATE-TOKEN": this.accessToken } : {},
-      }).then((res) => res.ok);
+      }).then((res) => {
+        if (!res.ok) throw new Error(res.statusText || `HTTP ${res.status}`);
+      });
     } catch (e) {
       console.error(
         "Invalid Gitlab Access Token provided! Access token will not be used",
@@ -156,6 +182,21 @@ class GitLabRepoLoader {
       );
     }
 
+    if (this.withWikis) {
+      console.log(`[Gitlab Loader]: Fetching wiki.`);
+      const wiki = await this.fetchWiki();
+      console.log(`[Gitlab Loader]: Fetched ${wiki.length} wiki pages.`);
+      docs.push(
+        ...wiki.map((wiki) => ({
+          wiki,
+          metadata: {
+            source: `wiki-${this.repo}-${wiki.slug}`,
+            url: `${this.repo}/-/wikis/${wiki.slug}`,
+          },
+        }))
+      );
+    }
+
     return docs;
   }
 
@@ -182,6 +223,7 @@ class GitLabRepoLoader {
 
     let branchesPage = [];
     while ((branchesPage = await this.fetchNextPage(branchesRequestData))) {
+      if (!Array.isArray(branchesPage) || !branchesPage?.length) break;
       this.branches.push(...branchesPage.map((branch) => branch.name));
     }
     return this.#branchPrefSort(this.branches);
@@ -204,6 +246,7 @@ class GitLabRepoLoader {
     let filesPage = null;
     let pagePromises = [];
     while ((filesPage = await this.fetchNextPage(filesRequestData))) {
+      if (!Array.isArray(filesPage) || !filesPage?.length) break;
       // Fetch all the files that are not ignored in parallel.
       pagePromises = filesPage
         .filter((file) => {
@@ -229,6 +272,35 @@ class GitLabRepoLoader {
   }
 
   /**
+   * Fetches every discussion note on a single issue.
+   * @param {number|string} issueId - The iid of the issue.
+   * @returns {Promise<string[][]>} The notes of each discussion.
+   */
+  async #fetchIssueDiscussions(issueId) {
+    const discussionsRequestData = {
+      endpoint: `/api/v4/projects/${this.projectId}/issues/${issueId}/discussions`,
+    };
+    let discussionPage = null;
+    const discussions = [];
+
+    while (
+      (discussionPage = await this.fetchNextPage(discussionsRequestData))
+    ) {
+      if (!Array.isArray(discussionPage) || !discussionPage?.length) break;
+      discussions.push(
+        ...discussionPage.map(({ notes }) =>
+          notes.map(
+            ({ body, author, created_at }) =>
+              `${author.username} at ${created_at}:
+${body}`
+          )
+        )
+      );
+    }
+    return discussions;
+  }
+
+  /**
    * Fetches all issues from the repository.
    * @returns {Promise<Issue[]>} An array of issue objects.
    */
@@ -241,30 +313,12 @@ class GitLabRepoLoader {
     let issuesPage = null;
     let pagePromises = [];
     while ((issuesPage = await this.fetchNextPage(issuesRequestData))) {
+      if (!Array.isArray(issuesPage) || !issuesPage?.length) break;
       // Fetch all the issues in parallel.
       pagePromises = issuesPage.map(async (issue) => {
-        const discussionsRequestData = {
-          endpoint: `/api/v4/projects/${this.projectId}/issues/${issue.iid}/discussions`,
-        };
-        let discussionPage = null;
-        const discussions = [];
-
-        while (
-          (discussionPage = await this.fetchNextPage(discussionsRequestData))
-        ) {
-          discussions.push(
-            ...discussionPage.map(({ notes }) =>
-              notes.map(
-                ({ body, author, created_at }) =>
-                  `${author.username} at ${created_at}:
-${body}`
-              )
-            )
-          );
-        }
         const result = {
           ...issue,
-          discussions,
+          discussions: await this.#fetchIssueDiscussions(issue.iid),
         };
         return result;
       });
@@ -279,30 +333,86 @@ ${body}`
   }
 
   /**
+   * Fetches a single issue and its discussions.
+   * @param {number|string} issueId - The iid of the issue.
+   * @returns {Promise<Issue|null>} The issue object, or null if fetching fails.
+   */
+  async fetchSingleIssue(issueId) {
+    try {
+      const url = `${this.apiBase}/api/v4/projects/${this.projectId}/issues/${issueId}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: this.accessToken ? { "PRIVATE-TOKEN": this.accessToken } : {},
+      });
+
+      if (!response.ok)
+        throw new Error(`Failed to fetch single issue ${issueId}`);
+
+      const issue = await response.json();
+      return {
+        ...issue,
+        discussions: await this.#fetchIssueDiscussions(issueId),
+      };
+    } catch (e) {
+      console.error(`RepoLoader.fetchSingleIssue`, e);
+      return null;
+    }
+  }
+
+  /**
+   * Fetches all wiki pages from the repository.
+   * @returns {Promise<WikiPage[]>} An array of wiki page objects.
+   */
+  async fetchWiki() {
+    const wikiRequestData = {
+      endpoint: `/api/v4/projects/${this.projectId}/wikis`,
+      queryParams: {
+        with_content: "1",
+      },
+    };
+
+    const wikiPages = await this.fetchNextPage(wikiRequestData);
+    if (!Array.isArray(wikiPages)) return [];
+    console.log(`Total wiki pages fetched: ${wikiPages.length}`);
+    return wikiPages;
+  }
+
+  /**
    * Fetches the content of a single file from the repository.
    * @param {string} sourceFilePath - The path to the file in the repository.
    * @returns {Promise<string|null>} The content of the file, or null if fetching fails.
    */
-  async fetchSingleFileContents(sourceFilePath) {
+  async fetchSingleFileContents(sourceFilePath, retries = 0) {
     try {
-      const data = await fetch(
-        `${this.apiBase}/api/v4/projects/${
-          this.projectId
-        }/repository/files/${encodeURIComponent(sourceFilePath)}/raw?ref=${
-          this.branch
-        }`,
-        {
-          method: "GET",
-          headers: this.accessToken
-            ? { "PRIVATE-TOKEN": this.accessToken }
-            : {},
-        }
-      ).then((res) => {
-        if (res.ok) return res.text();
-        throw new Error(`Failed to fetch single file ${sourceFilePath}`);
+      const url = `${this.apiBase}/api/v4/projects/${
+        this.projectId
+      }/repository/files/${encodeURIComponent(sourceFilePath)}/raw?ref=${
+        this.branch
+      }`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: this.accessToken ? { "PRIVATE-TOKEN": this.accessToken } : {},
       });
 
-      return data;
+      if (response.status === 429) {
+        if (retries >= MAX_RETRIES) {
+          console.warn(
+            `[Gitlab Loader]: Rate limit persists for ${sourceFilePath} after ${retries} retries. Skipping.`
+          );
+          return null;
+        }
+        const retryAfter = Number(response.headers.get("retry-after")) || 60;
+        console.warn(
+          `[Gitlab Loader]: Rate limit hit fetching ${sourceFilePath}. Waiting ${retryAfter}s...`
+        );
+        await this.#wait(retryAfter * 1000);
+        return this.fetchSingleFileContents(sourceFilePath, retries + 1);
+      }
+
+      if (!response.ok)
+        throw new Error(`Failed to fetch single file ${sourceFilePath}`);
+
+      return await response.text();
     } catch (e) {
       console.error(`RepoLoader.fetchSingleFileContents`, e);
       return null;
@@ -314,7 +424,7 @@ ${body}`
    * @param {Object} requestData - The request data.
    * @returns {Promise<Array<Object>|null>} The next page of data, or null if no more pages.
    */
-  async fetchNextPage(requestData) {
+  async fetchNextPage(requestData, retries = 0) {
     try {
       if (requestData.page === -1) return null;
       if (!requestData.page) requestData.page = 1;
@@ -332,28 +442,52 @@ ${body}`
         headers: this.accessToken ? { "PRIVATE-TOKEN": this.accessToken } : {},
       });
 
-      // Rate limits get hit very often if no PAT is provided
+      if (response.status === 429) {
+        if (retries >= MAX_RETRIES) {
+          console.warn(
+            `[Gitlab Loader]: Rate limit persists for ${endpoint} after ${retries} retries. Skipping.`
+          );
+          return null;
+        }
+        const retryAfter = Number(response.headers.get("retry-after")) || 60;
+        console.warn(
+          `[Gitlab Loader]: Rate limit hit for ${endpoint}. Waiting ${retryAfter}s before retrying...`
+        );
+        await this.#wait(retryAfter * 1000);
+        return this.fetchNextPage(requestData, retries + 1);
+      }
+
       if (response.status === 401) {
-        console.warn(`Rate limit hit for ${endpoint}. Skipping.`);
+        console.warn(
+          `[Gitlab Loader]: Unauthorized request for ${endpoint}. Skipping.`
+        );
         return null;
       }
 
-      const totalPages = Number(response.headers.get("x-total-pages"));
+      if (!response.ok) {
+        console.warn(
+          `[Gitlab Loader]: Unexpected status ${response.status} for ${endpoint}. Skipping.`
+        );
+        return null;
+      }
+
       const data = await response.json();
       if (!Array.isArray(data)) {
         console.warn(`Unexpected response format for ${endpoint}:`, data);
         return [];
       }
 
+      // GitLab omits x-total-pages for large repos, so use x-next-page
+      // as the sole pagination signal — it's empty on the last page.
+      const nextPage = response.headers.get("x-next-page");
+      const totalPages = response.headers.get("x-total-pages");
       console.log(
-        `Gitlab RepoLoader: fetched ${endpoint} page ${requestData.page}/${totalPages} with ${data.length} records.`
+        `Gitlab RepoLoader: fetched ${endpoint} page ${requestData.page}${
+          totalPages ? `/${totalPages}` : ""
+        } with ${data.length} records.`
       );
 
-      if (totalPages === requestData.page) {
-        requestData.page = -1;
-      } else {
-        requestData.page = Number(response.headers.get("x-next-page"));
-      }
+      requestData.page = nextPage?.trim() ? Number(nextPage) : -1;
 
       return data;
     } catch (e) {

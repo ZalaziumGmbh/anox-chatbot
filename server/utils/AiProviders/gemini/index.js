@@ -11,6 +11,13 @@ const {
 const { MODEL_MAP } = require("../modelMap");
 const { defaultGeminiModels, v1BetaModels } = require("./defaultModels");
 const { safeJsonParse } = require("../../http");
+const {
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
+const {
+  modelsDevReasoningCapabilities,
+  reasoningParams,
+} = require("../../helpers/reasoningEffort");
 const cacheFolder = path.resolve(
   process.env.STORAGE_DIR
     ? path.resolve(process.env.STORAGE_DIR, "models", "gemini")
@@ -29,6 +36,7 @@ class GeminiLLM {
     if (!process.env.GEMINI_API_KEY)
       throw new Error("No Gemini API key was set.");
 
+    this.className = "GeminiLLM";
     const { OpenAI: OpenAIApi } = require("openai");
     this.model =
       modelPreference ||
@@ -49,7 +57,6 @@ class GeminiLLM {
     };
 
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
 
     if (!fs.existsSync(cacheFolder))
       fs.mkdirSync(cacheFolder, { recursive: true });
@@ -71,7 +78,7 @@ class GeminiLLM {
   }
 
   #log(text, ...args) {
-    console.log(`\x1b[32m[GeminiLLM]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[32m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   // This checks if the .cached_at file has a timestamp that is more than 1Week (in millis)
@@ -107,7 +114,7 @@ class GeminiLLM {
     try {
       const cacheModelPath = path.resolve(cacheFolder, "models.json");
       if (!fs.existsSync(cacheModelPath))
-        return MODEL_MAP.gemini[modelName] ?? 30_720;
+        return MODEL_MAP.get("gemini", modelName) ?? 30_720;
 
       const models = safeJsonParse(fs.readFileSync(cacheModelPath));
       const model = models.find((model) => model.id === modelName);
@@ -118,15 +125,14 @@ class GeminiLLM {
       return model.contextWindow;
     } catch (e) {
       console.error(`GeminiLLM:promptWindowLimit`, e.message);
-      return MODEL_MAP.gemini[modelName] ?? 30_720;
+      return MODEL_MAP.get("gemini", modelName) ?? 30_720;
     }
   }
 
   promptWindowLimit() {
     try {
       if (!fs.existsSync(this.cacheModelPath))
-        return MODEL_MAP.gemini[this.model] ?? 30_720;
-
+        return MODEL_MAP.get("gemini", this.model) ?? 30_720;
       const models = safeJsonParse(fs.readFileSync(this.cacheModelPath));
       const model = models.find((model) => model.id === this.model);
       if (!model)
@@ -136,7 +142,7 @@ class GeminiLLM {
       return model.contextWindow;
     } catch (e) {
       console.error(`GeminiLLM:promptWindowLimit`, e.message);
-      return MODEL_MAP.gemini[this.model] ?? 30_720;
+      return MODEL_MAP.get("gemini", this.model) ?? 30_720;
     }
   }
 
@@ -281,7 +287,7 @@ class GeminiLLM {
 
     if (allModels.length === 0) {
       console.error(`Gemini:getGeminiModels - No models found`);
-      return defaultGeminiModels;
+      return defaultGeminiModels();
     }
 
     console.log(
@@ -377,13 +383,25 @@ class GeminiLLM {
     ];
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
+  /**
+   * Returns the reasoning capabilities models.dev lists for the model.
+   * @returns {Promise<{reasoning: 'unknown' | boolean, reasoningOptions: string[]}>}
+   */
+  async getModelCapabilities() {
+    return modelsDevReasoningCapabilities("gemini", this.model);
+  }
+
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature, reasoningEffort = null } = {}
+  ) {
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
       this.openai.chat.completions
         .create({
           model: this.model,
           messages,
-          temperature: temperature,
+          ...temperatureParam(temperature),
+          ...reasoningParams("gemini", reasoningEffort, this.model),
         })
         .catch((e) => {
           console.error(e);
@@ -405,21 +423,33 @@ class GeminiLLM {
         total_tokens: result.output.usage.total_tokens || 0,
         outputTps: result.output.usage.completion_tokens / result.duration,
         duration: result.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.openai.chat.completions.create({
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature, reasoningEffort = null } = {}
+  ) {
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: this.openai.chat.completions.create({
         model: this.model,
         stream: true,
         messages,
-        temperature: temperature,
+        ...temperatureParam(temperature),
+        ...reasoningParams("gemini", reasoningEffort, this.model),
+        stream_options: {
+          include_usage: true,
+        },
       }),
       messages,
-      true
-    );
+      runPromptTokenCalculation: false,
+      modelTag: this.model,
+      provider: this.className,
+    });
 
     return measuredStreamRequest;
   }

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { SpeakerHigh, PauseCircle } from "@phosphor-icons/react";
+import messageToSpeech from "@/utils/chat/messageToSpeech";
 
-export default function NativeTTSMessage({ message }) {
+export default function NativeTTSMessage({ chatId, message }) {
   const [speaking, setSpeaking] = useState(false);
   const [supported, setSupported] = useState(false);
   useEffect(() => {
@@ -25,7 +26,7 @@ export default function NativeTTSMessage({ message }) {
     }
 
     if (window.speechSynthesis.speaking && !speaking) return;
-    const utterance = new SpeechSynthesisUtterance(message);
+    const utterance = new SpeechSynthesisUtterance(messageToSpeech(message));
     utterance.addEventListener("end", endSpeechUtterance);
     window.speechSynthesis.speak(utterance);
     setSpeaking(true);
@@ -36,11 +37,12 @@ export default function NativeTTSMessage({ message }) {
     <div className="mt-3 relative">
       <button
         onClick={speakMessage}
+        data-auto-play-chat-id={chatId}
         data-tooltip-id="message-to-speech"
         data-tooltip-content={
           speaking ? "Pause TTS speech of message" : "TTS Speak message"
         }
-        className="border-none text-[var(--theme-sidebar-footer-icon-fill)]"
+        className="border-none text-zinc-300 light:text-slate-500"
         aria-label={speaking ? "Pause speech" : "Speak message"}
       >
         {speaking ? (

@@ -1,4 +1,4 @@
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const { v4, validate } = require("uuid");
 const { User } = require("../../models/user");
 const {
@@ -38,24 +38,28 @@ async function recoverAccount(username = "", recoveryCodes = []) {
   // because this is a user who has not logged out and back in since upgrade.
   const allUserHashes = await RecoveryCode.hashesForUser(user.id);
   if (allUserHashes.length < 4)
-    return { success: false, error: "Invalid recovery codes" };
+    return { success: false, error: "Invalid recovery codes." };
 
-  // If they tried to send more than two unique codes, we only take the first two
-  const uniqueRecoveryCodes = [...new Set(recoveryCodes)]
-    .map((code) => code.trim())
-    .filter((code) => validate(code)) // we know that any provided code must be a uuid v4.
-    .slice(0, 2);
+  const uniqueRecoveryCodes = [
+    ...new Set(
+      recoveryCodes
+        .map((code) => (typeof code === "string" ? code.trim() : ""))
+        .filter((code) => validate(code))
+    ),
+  ].slice(0, 2);
   if (uniqueRecoveryCodes.length !== 2)
     return { success: false, error: "Invalid recovery codes." };
 
+  const unmatchedHashes = [...allUserHashes];
   const validCodes = uniqueRecoveryCodes.every((code) => {
-    let valid = false;
-    allUserHashes.forEach((hash) => {
-      if (bcrypt.compareSync(code, hash)) valid = true;
-    });
-    return valid;
+    const index = unmatchedHashes.findIndex((hash) =>
+      bcrypt.compareSync(code, hash)
+    );
+    if (index === -1) return false;
+    unmatchedHashes.splice(index, 1);
+    return true;
   });
-  if (!validCodes) return { success: false, error: "Invalid recovery codes" };
+  if (!validCodes) return { success: false, error: "Invalid recovery codes." };
 
   const { passwordResetToken, error } = await PasswordResetToken.create(
     user.id

@@ -86,9 +86,9 @@ jobs:
             ONE_REVISION="$GITHUB_SHA" PUBLIC_DIR="$PUBLIC_DIR" sh -ec '
               cd "$PUBLIC_DIR"
               docker build -f docker/Dockerfile --label org.opencontainers.image.revision="$ONE_REVISION" \
-                -t "zalaziumcode/chatbot:one-$ONE_REVISION" .
-              python3 server/scripts/qualify-one-image.py "zalaziumcode/chatbot:one-$ONE_REVISION"
-              docker save --output "$PUBLIC_DIR/image.tar" "zalaziumcode/chatbot:one-$ONE_REVISION"
+                -t "zalaziumcode/anox-chatbot:one-$ONE_REVISION" .
+              python3 server/scripts/qualify-one-image.py "zalaziumcode/anox-chatbot:one-$ONE_REVISION"
+              docker save --output "$PUBLIC_DIR/image.tar" "zalaziumcode/anox-chatbot:one-$ONE_REVISION"
             '
       - name: Publish only the exact tested image
         if: inputs.build
@@ -105,7 +105,7 @@ jobs:
           }
           printf '%s' "$REGISTRY_PASSWORD" | clean_skopeo login --authfile "$private_dir/auth.json" \
             --username "$REGISTRY_USER" --password-stdin docker.io
-          candidate="zalaziumcode/chatbot:one-$GITHUB_SHA"
+          candidate="zalaziumcode/anox-chatbot:one-$GITHUB_SHA"
           tested_id=$(clean_skopeo inspect --raw "docker-archive:$PUBLIC_DIR/image.tar" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
           if clean_skopeo inspect --authfile "$private_dir/auth.json" --raw "docker://$candidate" \

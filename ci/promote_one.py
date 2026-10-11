@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Promote an exact, previously built and recovery-qualified DEV image."""
 import json
-import base64
 import os
 from pathlib import Path
 import re
@@ -11,16 +10,17 @@ import tempfile
 import urllib.request
 
 CHECKS = {'admin', 'workflow', 'persistence', 'isolated-restore', 'schema-rollback'}
-# GitHub names may change; immutable images and retained recovery points do not.
+# Product repository names also determine the current image repositories.
 # Contract parity is checked in test_one_promotion.py before this script is copied
 # into product CI. Accept legacy names until the final consumer is retired.
 IMAGE_REPOSITORIES = {
-    'anox-pro': 'anox-pro', 'anox-task': 'anox-task', 'litellm': 'litellm',
-    'sales': 'sales', 'anox-crm': 'sales',
-    'dashboard': 'dashboard', 'anox-view': 'dashboard',
-    'mailbot': 'mailbot', 'anox-mail': 'mailbot',
-    'voicebot': 'voicebot', 'anox-voice': 'voicebot',
-    'chatbot': 'chatbot', 'anox-chatbot': 'chatbot',
+    'mastermind': 'litellm',
+    'anox-pro': 'anox-pro', 'anox-task': 'anox-task',
+    'sales': 'anox-crm', 'anox-crm': 'anox-crm',
+    'dashboard': 'anox-view', 'anox-view': 'anox-view',
+    'mailbot': 'anox-mail', 'anox-mail': 'anox-mail',
+    'voicebot': 'anox-voice', 'anox-voice': 'anox-voice',
+    'chatbot': 'anox-chatbot', 'anox-chatbot': 'anox-chatbot',
 }
 
 
@@ -33,6 +33,8 @@ def image_repository(repository):
 
 def validate(record, run, repository):
     target = image_repository(repository)
+    workflow = ('.github/workflows/one-litellm.yaml' if repository == 'ZalaziumGmbh/mastermind'
+                else '.github/workflows/deploy-zalazium-dev.yaml')
     if (set(record) != {'revision', 'run_id', 'digest', 'previous_digest', 'backup_id', 'checks', 'evidence'}
             or not re.fullmatch(r'[a-f0-9]{40}', record['revision'])
             or type(record['run_id']) is not int
@@ -43,7 +45,9 @@ def validate(record, run, repository):
             or not record['evidence'].startswith('https://github.com/ZalaziumGmbh/mastermind/')
             or run.get('status') != 'completed' or run.get('conclusion') != 'success'
             or run.get('head_sha') != record['revision']
-            or run.get('path') != '.github/workflows/deploy-zalazium-dev.yaml'):
+            or run.get('path') != workflow
+            or (repository == 'ZalaziumGmbh/mastermind'
+                and run.get('display_title') != 'LiteLLM qualify')):
         raise ValueError('Exact successful CI and reviewed recovery/compatibility evidence required')
     return target
 
@@ -57,22 +61,16 @@ def run_command(args, *, data=None):
 
 
 def main():
-    record = json.loads(Path('.github/one-release.json').read_text())
     repository = os.environ['GITHUB_REPOSITORY']
+    record_path = ('infrastructure/zalazium-one/litellm/release.json'
+                   if repository == 'ZalaziumGmbh/mastermind' else '.github/one-release.json')
+    record = json.loads(Path(record_path).read_text())
     image_repository(repository)
     req = urllib.request.Request('https://api.github.com/repos/' + repository + '/actions/runs/' + str(record['run_id']),
         headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
     with urllib.request.urlopen(req, timeout=30) as response:
         run = json.load(response)
     target = validate(record, run, repository)
-    if repository == 'ZalaziumGmbh/litellm':
-        request = urllib.request.Request('https://api.github.com/repos/' + repository
-            + '/contents/.github/one-official-image.txt?ref=' + record['revision'],
-            headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN']})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            official = base64.b64decode(json.load(response)['content']).decode().strip()
-        if official != 'docker.litellm.ai/berriai/litellm@' + record['digest']:
-            raise ValueError('Official image differs from the exact CI-tested upstream digest')
     if sys.argv[1:] == ['--verify']:
         print('Reviewed immutable release and successful build verified')
         return
@@ -88,8 +86,8 @@ def main():
             return json.loads(run_command(['skopeo', 'inspect', '--authfile', auth, 'docker://' + reference]))
         source = target + '@' + record['digest']
         metadata = inspect(source)
-        if metadata['Digest'] != record['digest'] or (image_repo_requires_revision(repository)
-                and metadata.get('Labels', {}).get('org.opencontainers.image.revision') != record['revision']):
+        if (metadata['Digest'] != record['digest']
+                or metadata.get('Labels', {}).get('org.opencontainers.image.revision') != record['revision']):
             raise ValueError('Published candidate differs from qualified revision')
         channel = target + ':zalazium-one-dev'
         # An absent initial channel is admitted only when the registry expressly
@@ -111,12 +109,6 @@ def main():
         if inspect(channel)['Digest'] != record['digest']:
             raise RuntimeError('Promoted channel verification failed')
         print('Exact qualified image promoted; legacy DEV and production tags unchanged')
-
-
-def image_repo_requires_revision(repository):
-    # The official LiteLLM image is mirrored byte-for-byte, never relabelled or
-    # rebuilt from the old fork. Its CI commit pins the exact upstream digest.
-    return repository != 'ZalaziumGmbh/litellm'
 
 
 if __name__ == '__main__':

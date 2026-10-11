@@ -10,7 +10,7 @@
 
 <p align="center">
     <b>AnythingLLM:</b> The all-in-one AI app you were looking for.<br />
-    Chat with your docs, use AI Agents, hyper-configurable, multi-user, & no frustrating set up required.
+    Chat with your docs, use AI Agents, hyper-configurable, multi-user, & no frustrating setup required.
 </p>
 
 <p align="center">
@@ -36,9 +36,13 @@
 👉 AnythingLLM for desktop (Mac, Windows, & Linux)! <a href="https://anythingllm.com/download" target="_blank"> Download Now</a>
 </p>
 
-A full-stack application that enables you to turn any document, resource, or piece of content into context that any LLM can use as references during chatting. This application allows you to pick and choose which LLM or Vector Database you want to use as well as supporting multi-user management and permissions.
+<p align="center">
+📱 AnythingLLM Mobile (Android) is open source! <a href="https://github.com/Mintplex-Labs/anythingllm-mobile" target="_blank">View the repo</a>
+</p>
 
-![Chatting](https://github.com/Mintplex-Labs/anything-llm/assets/16845892/cfc5f47c-bd91-4067-986c-f3f49621a859)
+Chat with your docs. Automate complex workflows with AI Agents. Hyper-configurable, multi-user ready, battle-tested—and runs locally by default with zero setup friction.
+
+![Chatting](https://github.com/Mintplex-Labs/anything-llm/releases/download/v1.11.2/AnythingLLM720p.gif)
 
 <details>
 <summary><kbd>Watch the demo!</kbd></summary>
@@ -49,26 +53,30 @@ A full-stack application that enables you to turn any document, resource, or pie
 
 ### Product Overview
 
-AnythingLLM is a full-stack application where you can use commercial off-the-shelf LLMs or popular open source LLMs and vectorDB solutions to build a private ChatGPT with no compromises that you can run locally as well as host remotely and be able to chat intelligently with any documents you provide it.
+AnythingLLM is the all-in-one AI application that lets you build a private, fully-featured ChatGPT—without compromises. Connect your favorite local or cloud LLM, ingest your documents, and start chatting in minutes. Out of the box you get built-in agents, multi-user support, vector databases, and document pipelines — no extra configuration required.
 
-AnythingLLM divides your documents into objects called `workspaces`. A Workspace functions a lot like a thread, but with the addition of containerization of your documents. Workspaces can share documents, but they do not talk to each other so you can keep your context for each workspace clean.
+AnythingLLM supports multiple users as well where you can control the access and experience per user without compromising the security or privacy of the instance or your intellectual property.
 
-## Cool features of AnythingLLM
+## Cool Features of AnythingLLM
 
-- 🆕 [**Full MCP-compatibility**](https://docs.anythingllm.com/mcp-compatibility/overview)
-- 🆕 [**No-code AI Agent builder**](https://docs.anythingllm.com/agent-flows/overview)
-- 🖼️ **Multi-modal support (both closed and open-source LLMs!)**
-- [**Custom AI Agents**](https://docs.anythingllm.com/agent/custom/introduction)
+- [Dynamic Model Routing](https://docs.anythingllm.com/model-router/overview) - Automatically route chats to the best provider & model for the conversation based on rules you define.
+- [Automatic & User Managed Memories](https://docs.anythingllm.com/features/memories) - Have your LLM remember important information about you or your workspace.
+- [Scheduled Tasks](https://docs.anythingllm.com/scheduled-jobs/overview) - Run recurring tasks or prompts on a cron schedule with full agent capabilities.
+- [Intelligent Skill Selection](https://docs.anythingllm.com/agent/intelligent-tool-selection) Enable **unlimited** tools for your models while reducing token usage by up to 80% per query
+- [No-code AI Agent builder](https://docs.anythingllm.com/agent-flows/overview)
+- [MCP-compatibility](https://docs.anythingllm.com/mcp-compatibility/overview)
+- [Multi-modal support (both closed and open-source LLMs!)](https://docs.anythingllm.com/features/language-models)
+- [Custom AI Agents](https://docs.anythingllm.com/agent/custom/introduction)
 - 👤 Multi-user instance support and permissioning _Docker version only_
 - 🦾 Agents inside your workspace (browse the web, etc)
 - 💬 [Custom Embeddable Chat widget for your website](https://github.com/Mintplex-Labs/anythingllm-embed/blob/main/README.md) _Docker version only_
 - 📖 Multiple document type support (PDF, TXT, DOCX, etc)
-- Simple chat UI with Drag-n-Drop funcitonality and clear citations.
-- 100% Cloud deployment ready.
+- Intuitive chat UI with drag-and-drop uploads and source citations.
+- Production-ready for any cloud deployment.
 - Works with all popular [closed and open-source LLM providers](#supported-llms-embedder-models-speech-models-and-vector-databases).
-- Built-in cost & time-saving measures for managing very large documents compared to any other chat UI.
+- Built-in optimizations for large document sets—lower costs and faster responses than other chat UIs.
 - Full Developer API for custom integrations!
-- Much more...install and find out!
+- ...and much more—install in minutes and see for yourself.
 
 ### Supported LLMs, Embedder Models, Speech models, and Vector Databases
 
@@ -82,12 +90,11 @@ AnythingLLM divides your documents into objects called `workspaces`. A Workspace
 - [Anthropic](https://www.anthropic.com/)
 - [NVIDIA NIM (chat models)](https://build.nvidia.com/explore/discover)
 - [Google Gemini Pro](https://ai.google.dev/)
-- [Hugging Face (chat models)](https://huggingface.co/)
 - [Ollama (chat models)](https://ollama.ai/)
 - [LM Studio (all models)](https://lmstudio.ai)
-- [LocalAi (all models)](https://localai.io/)
+- [LocalAI (all models)](https://localai.io/)
 - [Together AI (chat models)](https://www.together.ai/)
-- [Fireworks AI  (chat models)](https://fireworks.ai/)
+- [Fireworks AI (chat models)](https://fireworks.ai/)
 - [Perplexity (chat models)](https://www.perplexity.ai/)
 - [OpenRouter (chat models)](https://openrouter.ai/)
 - [DeepSeek (chat models)](https://deepseek.com/)
@@ -99,18 +106,37 @@ AnythingLLM divides your documents into objects called `workspaces`. A Workspace
 - [Text Generation Web UI](https://github.com/oobabooga/text-generation-webui)
 - [Apipie](https://apipie.ai/)
 - [xAI](https://x.ai/)
+- [Z.AI (chat models)](https://z.ai/model-api)
 - [Novita AI (chat models)](https://novita.ai/model-api/product/llm-api?utm_source=github_anything-llm&utm_medium=github_readme&utm_campaign=link)
 - [PPIO](https://ppinfra.com?utm_source=github_anything-llm)
+- [Gitee AI](https://ai.gitee.com/)
+- [Moonshot AI](https://www.moonshot.ai/)
+- [Microsoft Foundry Local](https://github.com/microsoft/Foundry-Local)
+- [CometAPI (chat models)](https://www.cometapi.com/)
+- [llmman](https://github.com/llmmanorg/llmman)
+- [PrivateModeAI (chat models)](https://privatemode.ai/)
+- [SambaNova Cloud (chat models)](https://cloud.sambanova.ai/)
+- [Lemonade by AMD](https://lemonade-server.ai)
+- [Minimax](https://platform.minimax.io)
+- [Cerebras (chat models)](https://www.cerebras.ai/)
+- [oMLX](https://github.com/jundot/omlx)
 
 **Embedder models:**
 
 - [AnythingLLM Native Embedder](/server/storage/models/README.md) (default)
 - [OpenAI](https://openai.com)
 - [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service)
-- [LocalAi (all)](https://localai.io/)
+- [Gemini](https://ai.google.dev/)
+- [LocalAI (all)](https://localai.io/)
 - [Ollama (all)](https://ollama.ai/)
 - [LM Studio (all)](https://lmstudio.ai)
+- [Lemonade](https://lemonade-server.ai)
+- [OpenRouter](https://openrouter.ai/)
+- [LiteLLM](https://github.com/BerriAI/litellm)
 - [Cohere](https://cohere.com/)
+- [Voyage AI](https://www.voyageai.com/)
+- [Mistral](https://mistral.ai/)
+- Generic OpenAI-compatible embedding APIs
 
 **Audio Transcription models:**
 
@@ -121,7 +147,7 @@ AnythingLLM divides your documents into objects called `workspaces`. A Workspace
 
 - Native Browser Built-in (default)
 - [PiperTTSLocal - runs in browser](https://github.com/rhasspy/piper)
-- [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech/voice-options)
+- [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech#voice-options)
 - [ElevenLabs](https://elevenlabs.io/)
 - Any OpenAI Compatible TTS service.
 
@@ -132,9 +158,10 @@ AnythingLLM divides your documents into objects called `workspaces`. A Workspace
 **Vector Databases:**
 
 - [LanceDB](https://github.com/lancedb/lancedb) (default)
+- [PGVector](https://github.com/pgvector/pgvector)
 - [Astra DB](https://www.datastax.com/products/datastax-astra)
 - [Pinecone](https://pinecone.io)
-- [Chroma](https://trychroma.com)
+- [Chroma & ChromaCloud](https://trychroma.com)
 - [Weaviate](https://weaviate.io)
 - [Qdrant](https://qdrant.tech)
 - [Milvus](https://milvus.io)
@@ -142,25 +169,29 @@ AnythingLLM divides your documents into objects called `workspaces`. A Workspace
 
 ### Technical Overview
 
-This monorepo consists of three main sections:
+This monorepo consists of six main sections:
 
 - `frontend`: A viteJS + React frontend that you can run to easily create and manage all your content the LLM can use.
 - `server`: A NodeJS express server to handle all the interactions and do all the vectorDB management and LLM interactions.
-- `collector`: NodeJS express server that process and parses documents from the UI.
+- `collector`: NodeJS express server that processes and parses documents from the UI.
 - `docker`: Docker instructions and build process + information for building from source.
 - `embed`: Submodule for generation & creation of the [web embed widget](https://github.com/Mintplex-Labs/anythingllm-embed).
 - `browser-extension`: Submodule for the [chrome browser extension](https://github.com/Mintplex-Labs/anythingllm-extension).
 
-## 🛳 Self Hosting
+## 🛳 Self-Hosting
 
 Mintplex Labs & the community maintain a number of deployment methods, scripts, and templates that you can use to run AnythingLLM locally. Refer to the table below to read how to deploy on your preferred environment or to automatically deploy.
 | Docker | AWS | GCP | Digital Ocean | Render.com |
 |----------------------------------------|----|-----|---------------|------------|
 | [![Deploy on Docker][docker-btn]][docker-deploy] | [![Deploy on AWS][aws-btn]][aws-deploy] | [![Deploy on GCP][gcp-btn]][gcp-deploy] | [![Deploy on DigitalOcean][do-btn]][do-deploy] | [![Deploy on Render.com][render-btn]][render-deploy] |
 
-| Railway  |  RepoCloud | Elestio |
-| --- | --- | --- |
-| [![Deploy on Railway][railway-btn]][railway-deploy] | [![Deploy on RepoCloud][repocloud-btn]][repocloud-deploy] | [![Deploy on Elestio][elestio-btn]][elestio-deploy] |
+| Railway                                             | RepoCloud                                                 | Elestio                                             | Northflank                                                   | Sealos                                           |
+| --------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
+| [![Deploy on Railway][railway-btn]][railway-deploy] | [![Deploy on RepoCloud][repocloud-btn]][repocloud-deploy] | [![Deploy on Elestio][elestio-btn]][elestio-deploy] | [![Deploy on Northflank][northflank-btn]][northflank-deploy] | [![Deploy on Sealos][sealos-btn]][sealos-deploy] |
+
+| Easypanel                                                 |
+| --------------------------------------------------------- |
+| [![Deploy on Easypanel][easypanel-btn]][easypanel-deploy] |
 
 [or set up a production AnythingLLM instance without Docker →](./BARE_METAL.md)
 
@@ -173,16 +204,6 @@ Mintplex Labs & the community maintain a number of deployment methods, scripts, 
 - `yarn dev:collector` To then run the document collector (from root of repo).
 
 [Learn about documents](./server/storage/documents/DOCUMENTS.md)
-
-[Learn about vector caching](./server/storage/vector-cache/VECTOR_CACHE.md)
-
-## External Apps & Integrations
-
-_These are apps that are not maintained by Mintplex Labs, but are compatible with AnythingLLM. A listing here is not an endorsement._
-
-- [Midori AI Subsystem Manager](https://io.midori-ai.xyz/subsystem/anythingllm/) - A streamlined and efficient way to deploy AI systems using Docker container technology.
-- [Coolify](https://coolify.io/docs/services/anythingllm/) - Deploy AnythingLLM with a single click.
-- [GPTLocalhost for Microsoft Word](https://gptlocalhost.com/demo/) - A local Word Add-in for you to use AnythingLLM in Microsoft Word.
 
 ## Telemetry & Privacy
 
@@ -204,23 +225,47 @@ Set `DISABLE_TELEMETRY` in your server or docker .env settings to "true" to opt 
 We will only track usage details that help us make product and roadmap decisions, specifically:
 
 - Type of your installation (Docker or Desktop)
+
 - When a document is added or removed. No information _about_ the document. Just that the event occurred. This gives us an idea of use.
-- Type of vector database in use. Let's us know which vector database provider is the most used to prioritize changes when updates arrive for that provider.
-- Type of LLM in use. Let's us know the most popular choice and prioritize changes when updates arrive for that provider.
-- Chat is sent. This is the most regular "event" and gives us an idea of the daily-activity of this project across all installations. Again, only the event is sent - we have no information on the nature or content of the chat itself.
 
-You can verify these claims by finding all locations `Telemetry.sendTelemetry` is called. Additionally these events are written to the output log so you can also see the specific data which was sent - if enabled. No IP or other identifying information is collected. The Telemetry provider is [PostHog](https://posthog.com/) - an open-source telemetry collection service.
+- Type of vector database in use. This helps us prioritize changes when updates arrive for that provider.
 
-[View all telemetry events in source code](https://github.com/search?q=repo%3AMintplex-Labs%2Fanything-llm%20.sendTelemetry\(&type=code)
+- Type of LLM provider & model tag in use. This helps us prioritize changes when updates arrive for that provider or model, or combination thereof. eg: reasoning vs regular, multi-modal models, etc.
+
+- When a chat is sent. This is the most regular "event" and gives us an idea of the daily-activity of this project across all installations. Again, only the **event** is sent - we have no information on the nature or content of the chat itself.
+
+You can verify these claims by finding all locations `Telemetry.sendTelemetry` is called. Additionally these events are written to the output log so you can also see the specific data which was sent - if enabled. **No IP or other identifying information is collected**. The Telemetry provider is [PostHog](https://posthog.com/) - an open-source telemetry collection service.
+
+We take privacy very seriously, and we hope you understand that we want to learn how our tool is used, without using annoying popup surveys, so we can build something worth using. The anonymous data is _never_ shared with third parties, ever.
+
+[View all telemetry events in source code](https://github.com/search?q=repo%3AMintplex-Labs%2Fanything-llm%20.sendTelemetry(&type=code)
+
+### Other outbound connections
+
+If you disable telemetry, you would still see outbound connections to the following services:
+
+- If using an external tool, LLM, Embedding models, or Vector databases, you will still see outbound connections to the respective service provider.
+- `cdn.anythingllm.com` for pulling models from our mirror CDN. This is not tracked by telemetry and is actually useful for those in VPN restricted regions.
+- `github/githubusercontent.com` There are some various flat files that are downloaded from these domains for context window caching.
+
+Basically, if telemetry is disabled we don't collect anything. However, depending on your setup you may still see outbound connections and would be subject to the terms of service of the respective service provider.
 
 </details>
 
-
 ## 👋 Contributing
 
-- create issue
-- create PR with branch name format of `<issue number>-<short name>`
-- LGTM from core-team
+- [Contributing to AnythingLLM](./CONTRIBUTING.md) - How to contribute to AnythingLLM.
+
+## 💖 Sponsors
+
+<!--
+### Premium Sponsors
+premium-sponsors (reserved for $100/mth sponsors who request to be called out here and/or are non-private sponsors) -->
+<!-- premium-sponsors -->
+
+### All Sponsors
+
+<!-- all-sponsors --><a href="https://github.com/jaschadub"><img src="https:&#x2F;&#x2F;github.com&#x2F;jaschadub.png" width="60px" alt="User avatar: Jascha" /></a><a href="https://github.com/KickingAss2024"><img src="https:&#x2F;&#x2F;github.com&#x2F;KickingAss2024.png" width="60px" alt="User avatar: KickAss" /></a><a href="https://github.com/ShadowArcanist"><img src="https:&#x2F;&#x2F;github.com&#x2F;ShadowArcanist.png" width="60px" alt="User avatar: ShadowArcanist" /></a><a href="https://github.com/AtlasVIA"><img src="https:&#x2F;&#x2F;github.com&#x2F;AtlasVIA.png" width="60px" alt="User avatar: Atlas" /></a><a href="https://github.com/cope"><img src="https:&#x2F;&#x2F;github.com&#x2F;cope.png" width="60px" alt="User avatar: Predrag Stojadinović" /></a><a href="https://github.com/DiegoSpinola"><img src="https:&#x2F;&#x2F;github.com&#x2F;DiegoSpinola.png" width="60px" alt="User avatar: Diego Spinola" /></a><a href="https://github.com/PortlandKyGuy"><img src="https:&#x2F;&#x2F;github.com&#x2F;PortlandKyGuy.png" width="60px" alt="User avatar: Kyle" /></a><a href="https://github.com/peperunas"><img src="https:&#x2F;&#x2F;github.com&#x2F;peperunas.png" width="60px" alt="User avatar: Giulio De Pasquale" /></a><a href="https://github.com/jasoncdavis0"><img src="https:&#x2F;&#x2F;github.com&#x2F;jasoncdavis0.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/macstadium"><img src="https:&#x2F;&#x2F;github.com&#x2F;macstadium.png" width="60px" alt="User avatar: MacStadium" /></a><a href="https://github.com/armlynobinguar"><img src="https:&#x2F;&#x2F;github.com&#x2F;armlynobinguar.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/MikeHago"><img src="https:&#x2F;&#x2F;github.com&#x2F;MikeHago.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/maaisde"><img src="https:&#x2F;&#x2F;github.com&#x2F;maaisde.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/mhollier117"><img src="https:&#x2F;&#x2F;github.com&#x2F;mhollier117.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/pleabargain"><img src="https:&#x2F;&#x2F;github.com&#x2F;pleabargain.png" width="60px" alt="User avatar: Dennis" /></a><a href="https://github.com/broichan"><img src="https:&#x2F;&#x2F;github.com&#x2F;broichan.png" width="60px" alt="User avatar: Michael Hamilton, Ph.D." /></a><a href="https://github.com/azim-charaniya"><img src="https:&#x2F;&#x2F;github.com&#x2F;azim-charaniya.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/gabriellemon"><img src="https:&#x2F;&#x2F;github.com&#x2F;gabriellemon.png" width="60px" alt="User avatar: TernaryLabs" /></a><a href="https://github.com/CelaDaniel"><img src="https:&#x2F;&#x2F;github.com&#x2F;CelaDaniel.png" width="60px" alt="User avatar: Daniel Cela" /></a><a href="https://github.com/altrsadmin"><img src="https:&#x2F;&#x2F;github.com&#x2F;altrsadmin.png" width="60px" alt="User avatar: Alesso" /></a><a href="https://github.com/bitjungle"><img src="https:&#x2F;&#x2F;github.com&#x2F;bitjungle.png" width="60px" alt="User avatar: Rune Mathisen" /></a><a href="https://github.com/pcrossleyAC"><img src="https:&#x2F;&#x2F;github.com&#x2F;pcrossleyAC.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/saroj-pattnaik"><img src="https:&#x2F;&#x2F;github.com&#x2F;saroj-pattnaik.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/techmedic5"><img src="https:&#x2F;&#x2F;github.com&#x2F;techmedic5.png" width="60px" alt="User avatar: Alan" /></a><a href="https://github.com/ddocta"><img src="https:&#x2F;&#x2F;github.com&#x2F;ddocta.png" width="60px" alt="User avatar: Damien Peters" /></a><a href="https://github.com/dcsdigital"><img src="https:&#x2F;&#x2F;github.com&#x2F;dcsdigital.png" width="60px" alt="User avatar: DCS Digital" /></a><a href="https://github.com/pm7y"><img src="https:&#x2F;&#x2F;github.com&#x2F;pm7y.png" width="60px" alt="User avatar: Paul Mcilreavy" /></a><a href="https://github.com/tilwolf"><img src="https:&#x2F;&#x2F;github.com&#x2F;tilwolf.png" width="60px" alt="User avatar: Til Wolf" /></a><a href="https://github.com/ozzyoss77"><img src="https:&#x2F;&#x2F;github.com&#x2F;ozzyoss77.png" width="60px" alt="User avatar: Leopoldo Crhistian Riverin Gomez" /></a><a href="https://github.com/AlphaEcho11"><img src="https:&#x2F;&#x2F;github.com&#x2F;AlphaEcho11.png" width="60px" alt="User avatar: AJEsau" /></a><a href="https://github.com/svanomm"><img src="https:&#x2F;&#x2F;github.com&#x2F;svanomm.png" width="60px" alt="User avatar: Steven VanOmmeren" /></a><a href="https://github.com/socketbox"><img src="https:&#x2F;&#x2F;github.com&#x2F;socketbox.png" width="60px" alt="User avatar: Casey Boettcher" /></a><a href="https://github.com/zebbern"><img src="https:&#x2F;&#x2F;github.com&#x2F;zebbern.png" width="60px" alt="User avatar: zebbern" /></a><a href="https://github.com/avineetbespin"><img src="https:&#x2F;&#x2F;github.com&#x2F;avineetbespin.png" width="60px" alt="User avatar: Avineet" /></a><a href="https://github.com/invictus-1"><img src="https:&#x2F;&#x2F;github.com&#x2F;invictus-1.png" width="60px" alt="User avatar: Chris" /></a><a href="https://github.com/mirbyte"><img src="https:&#x2F;&#x2F;github.com&#x2F;mirbyte.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/bisonbet"><img src="https:&#x2F;&#x2F;github.com&#x2F;bisonbet.png" width="60px" alt="User avatar: Tim Champ" /></a><a href="https://github.com/Sinkingdev"><img src="https:&#x2F;&#x2F;github.com&#x2F;Sinkingdev.png" width="60px" alt="User avatar: Peter Mathisen" /></a><a href="https://github.com/Ed-STEM"><img src="https:&#x2F;&#x2F;github.com&#x2F;Ed-STEM.png" width="60px" alt="User avatar: Ed di Girolamo" /></a><a href="https://github.com/milkowski"><img src="https:&#x2F;&#x2F;github.com&#x2F;milkowski.png" width="60px" alt="User avatar: Wojciech Miłkowski" /></a><a href="https://github.com/ADS-Fund"><img src="https:&#x2F;&#x2F;github.com&#x2F;ADS-Fund.png" width="60px" alt="User avatar: ADS Fund" /></a><a href="https://github.com/arc46-io"><img src="https:&#x2F;&#x2F;github.com&#x2F;arc46-io.png" width="60px" alt="User avatar: arc46 GmbH" /></a><a href="https://github.com/liyin2015"><img src="https:&#x2F;&#x2F;github.com&#x2F;liyin2015.png" width="60px" alt="User avatar: Li Yin" /></a><a href="https://github.com/SylphAI-Inc"><img src="https:&#x2F;&#x2F;github.com&#x2F;SylphAI-Inc.png" width="60px" alt="User avatar: AdaL" /></a><a href="https://github.com/breesait"><img src="https:&#x2F;&#x2F;github.com&#x2F;breesait.png" width="60px" alt="User avatar: " /></a><a href="https://github.com/mgMsquared"><img src="https:&#x2F;&#x2F;github.com&#x2F;mgMsquared.png" width="60px" alt="User avatar: Mik" /></a><a href="https://github.com/sswkor"><img src="https:&#x2F;&#x2F;github.com&#x2F;sswkor.png" width="60px" alt="User avatar: " /></a><!-- all-sponsors -->
 
 ## 🌟 Contributors
 
@@ -230,8 +275,9 @@ You can verify these claims by finding all locations `Telemetry.sendTelemetry` i
 
 ## 🔗 More Products
 
-- **[VectorAdmin][vector-admin]:** An all-in-one GUI & tool-suite for managing vector databases.
-- **[OpenAI Assistant Swarm][assistant-swarm]:** Turn your entire library of OpenAI assistants into one single army commanded from a single agent.
+- **[AnythingLLM Mobile (Open-Source Licensed)][anythingllm-mobile]:** The same AnythingLLM on-device expierence, but on your phone.
+- **[AnythingLLM Browser Extension][anythingllm-extension]:** A browser extension that allows you to use AnythingLLM in your browser.
+- **[AnythingLLM Embed][anythingllm-embed]:** A widget that allows you to embed AnythingLLM in your website.
 
 <div align="right">
 
@@ -241,15 +287,16 @@ You can verify these claims by finding all locations `Telemetry.sendTelemetry` i
 
 ---
 
-Copyright © 2025 [Mintplex Labs][profile-link]. <br />
+Copyright © 2026 [Mintplex Labs][profile-link]. <br />
 This project is [MIT](./LICENSE) licensed.
 
 <!-- LINK GROUP -->
 
 [back-to-top]: https://img.shields.io/badge/-BACK_TO_TOP-222628?style=flat-square
 [profile-link]: https://github.com/mintplex-labs
-[vector-admin]: https://github.com/mintplex-labs/vector-admin
-[assistant-swarm]: https://github.com/Mintplex-Labs/openai-assistant-swarm
+[anythingllm-mobile]: https://github.com/Mintplex-Labs/anythingllm-mobile
+[anythingllm-extension]: https://github.com/Mintplex-Labs/anythingllm-extension
+[anythingllm-embed]: https://github.com/Mintplex-Labs/anythingllm-embed
 [docker-btn]: ./images/deployBtns/docker.png
 [docker-deploy]: ./docker/HOW_TO_USE_DOCKER.md
 [aws-btn]: ./images/deployBtns/aws.png
@@ -268,3 +315,17 @@ This project is [MIT](./LICENSE) licensed.
 [repocloud-deploy]: https://repocloud.io/details/?app_id=276
 [elestio-btn]: https://elest.io/images/logos/deploy-to-elestio-btn.png
 [elestio-deploy]: https://elest.io/open-source/anythingllm
+[northflank-btn]: https://assets.northflank.com/deploy_to_northflank_smm_36700fb050.svg
+[northflank-deploy]: https://northflank.com/stacks/deploy-anythingllm
+[sealos-btn]: https://sealos.io/Deploy-on-Sealos.svg
+[sealos-deploy]: https://sealos.io/products/app-store/anything-llm
+[easypanel-btn]: https://easypanel.io/img/deploy-on-easypanel-40.svg
+[easypanel-deploy]: https://easypanel.io/templates/anythingllm
+
+## Development container
+
+Read [native CLI state and rebuild instructions](.devcontainer/AI-STATE.md) before
+the first rebuild. Select existing developer-specific Codex/Claude volumes
+explicitly; missing selections stop creation before replacing a container.
+Native CLI binaries are installed in the development image, outside login state.
+The shared CLI additions are confined to development-container builds.

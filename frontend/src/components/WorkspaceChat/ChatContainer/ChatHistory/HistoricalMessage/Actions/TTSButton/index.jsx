@@ -1,39 +1,41 @@
-import { useEffect, useState } from "react";
+import { useTTSProvider } from "@/components/contexts/TTSProvider";
 import NativeTTSMessage from "./native";
 import AsyncTTSMessage from "./asyncTts";
 import PiperTTSMessage from "./piperTTS";
-import System from "@/models/system";
+
+function WrapTTS({ children }) {
+  return <div className="mx-2">{children}</div>;
+}
 
 export default function TTSMessage({ slug, chatId, message }) {
-  const [settings, setSettings] = useState({});
-  const [provider, setProvider] = useState("native");
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function getSettings() {
-      const _settings = await System.keys();
-      setProvider(_settings?.TextToSpeechProvider ?? "native");
-      setSettings(_settings);
-      setLoading(false);
-    }
-    getSettings();
-  }, []);
-
+  const { settings, provider, loading } = useTTSProvider();
   if (!chatId || loading) return null;
 
   switch (provider) {
     case "openai":
     case "generic-openai":
     case "elevenlabs":
-      return <AsyncTTSMessage slug={slug} chatId={chatId} />;
+    case "kokoro":
+      return (
+        <WrapTTS>
+          <AsyncTTSMessage chatId={chatId} slug={slug} />
+        </WrapTTS>
+      );
     case "piper_local":
       return (
-        <PiperTTSMessage
-          voiceId={settings?.TTSPiperTTSVoiceModel}
-          message={message}
-        />
+        <WrapTTS>
+          <PiperTTSMessage
+            chatId={chatId}
+            voiceId={settings?.TTSPiperTTSVoiceModel}
+            message={message}
+          />
+        </WrapTTS>
       );
     default:
-      return <NativeTTSMessage message={message} />;
+      return (
+        <WrapTTS>
+          <NativeTTSMessage chatId={chatId} message={message} />
+        </WrapTTS>
+      );
   }
 }

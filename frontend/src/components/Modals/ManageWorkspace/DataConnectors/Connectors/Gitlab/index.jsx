@@ -6,6 +6,7 @@ import { TagsInput } from "react-tag-input-component";
 import { Info, Warning } from "@phosphor-icons/react";
 import { Tooltip } from "react-tooltip";
 import { useTranslation } from "react-i18next";
+import Toggle from "@/components/lib/Toggle";
 
 const DEFAULT_BRANCHES = ["main", "master"];
 export default function GitlabOptions() {
@@ -36,6 +37,7 @@ export default function GitlabOptions() {
         branch: form.get("branch"),
         ignorePaths: ignores,
         fetchIssues: form.get("fetchIssues"),
+        fetchWikis: form.get("fetchWikis"),
       });
 
       if (!!error) {
@@ -120,25 +122,25 @@ export default function GitlabOptions() {
               <div className="flex flex-col pr-10">
                 <div className="flex flex-col gap-y-1 mb-4">
                   <label className="text-white font-bold text-sm flex gap-x-2 items-center">
-                    <p className="font-bold text-white">Settings</p>{" "}
+                    <p className="font-bold text-white">Settings</p>
                   </label>
-                  <p className="text-xs font-normal text-white/50">
+                  <p className="text-xs font-normal text-white">
                     {t("connectors.gitlab.token_description")}
                   </p>
                 </div>
+                <div className="flex items-center gap-x-2 mb-3">
+                  <Toggle
+                    name="fetchIssues"
+                    size="md"
+                    label={t("connectors.gitlab.fetch_issues")}
+                  />
+                </div>
                 <div className="flex items-center gap-x-2">
-                  <label className="relative inline-flex cursor-pointer items-center">
-                    <input
-                      type="checkbox"
-                      name="fetchIssues"
-                      value={true}
-                      className="peer sr-only"
-                    />
-                    <div className="peer-disabled:opacity-50 pointer-events-none peer h-6 w-11 rounded-full bg-[#CFCFD0] after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:shadow-xl after:border-none after:bg-white after:box-shadow-md after:transition-all after:content-[''] peer-checked:bg-[#32D583] peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-transparent"></div>
-                    <span className="ml-3 text-sm font-medium text-white">
-                      {t("connectors.gitlab.fetch_issues")}
-                    </span>
-                  </label>
+                  <Toggle
+                    name="fetchWikis"
+                    size="md"
+                    label="Fetch Wikis as Documents"
+                  />
                 </div>
               </div>
               <GitLabBranchSelection
@@ -147,7 +149,7 @@ export default function GitlabOptions() {
               />
             </div>
 
-            <div className="flex flex-col w-full py-4 pr-10">
+            <div className="flex flex-col w-full py-4 pr-10 [&_.rti--container]:!bg-theme-settings-input-bg light:[&_.rti--container]:!bg-theme-settings-input-bg [&_.rti--container]:!border-transparent light:[&_.rti--container]:!border-transparent [&_.rti--container]:focus-within:!border-sky-500 light:[&_.rti--container]:focus-within:!border-sky-500">
               <div className="flex flex-col gap-y-1 mb-4">
                 <label className="text-white text-sm flex gap-x-2 items-center">
                   <p className="text-white text-sm font-bold">
@@ -164,9 +166,9 @@ export default function GitlabOptions() {
                 name="ignores"
                 placeholder="!*.js, images/*, .DS_Store, bin/*"
                 classNames={{
-                  tag: "bg-theme-settings-input-bg light:bg-black/10 bg-blue-300/10 text-zinc-800",
+                  tag: "!bg-zinc-700 light:!bg-slate-200 !text-zinc-100 light:!text-slate-800",
                   input:
-                    "flex p-1 !bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none",
+                    "flex !bg-transparent text-zinc-100 light:text-slate-900 placeholder:text-zinc-400 light:placeholder:text-slate-400 text-sm outline-none",
                 }}
               />
             </div>
@@ -177,7 +179,7 @@ export default function GitlabOptions() {
             <button
               type="submit"
               disabled={loading}
-              className="mt-2 w-full justify-center border border-slate-200 px-4 py-2 rounded-lg text-dark-text text-sm font-bold items-center flex gap-x-2 bg-slate-200 hover:bg-slate-300 hover:text-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed"
+              className="mt-2 w-full justify-center border-none px-4 py-2 rounded-lg text-dark-text light:text-white text-sm font-bold items-center flex gap-x-2 bg-theme-home-button-primary hover:bg-theme-home-button-primary-hover disabled:bg-theme-home-button-primary-hover disabled:cursor-not-allowed"
             >
               {loading ? "Collecting files..." : "Submit"}
             </button>

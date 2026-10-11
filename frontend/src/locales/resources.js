@@ -20,6 +20,7 @@ import Spanish from "./es/common.js";
 import French from "./fr/common.js";
 import Mandarin from "./zh/common.js";
 import German from "./de/common.js";
+import Estonian from "./et/common.js";
 import Russian from "./ru/common.js";
 import Italian from "./it/common.js";
 import Portuguese from "./pt_BR/common.js";
@@ -31,6 +32,19 @@ import Farsi from "./fa/common.js";
 import Turkish from "./tr/common.js";
 import Arabic from "./ar/common.js";
 import Danish from "./da/common.js";
+import Japanese from "./ja/common.js";
+import Lativian from "./lv/common.js";
+import Polish from "./pl/common.js";
+import Romanian from "./ro/common.js";
+import Czech from "./cs/common.js";
+import Lithuanian from "./lt/common.js";
+import Catalan from "./ca/common.js";
+import Indonesian from "./id/common.js";
+import Lao from "./lo/common.js";
+import Croatian from "./hr/common.js";
+import Swedish from "./sv/common.js";
+import Hindi from "./hi/common.js";
+import Bulgarian from "./bg/common.js";
 
 export const defaultNS = "common";
 export const resources = {
@@ -54,6 +68,12 @@ export const resources = {
   },
   ko: {
     common: Korean,
+  },
+  lo: {
+    common: Lao,
+  },
+  et: {
+    common: Estonian,
   },
   ru: {
     common: Russian,
@@ -84,5 +104,41 @@ export const resources = {
   },
   da: {
     common: Danish,
+  },
+  ja: {
+    common: Japanese,
+  },
+  lv: {
+    common: Lativian,
+  },
+  pl: {
+    common: Polish,
+  },
+  ro: {
+    common: Romanian,
+  },
+  cs: {
+    common: Czech,
+  },
+  lt: {
+    common: Lithuanian,
+  },
+  ca: {
+    common: Catalan,
+  },
+  id: {
+    common: Indonesian,
+  },
+  hr: {
+    common: Croatian,
+  },
+  sv: {
+    common: Swedish,
+  },
+  hi: {
+    common: Hindi,
+  },
+  bg: {
+    common: Bulgarian,
   },
 };

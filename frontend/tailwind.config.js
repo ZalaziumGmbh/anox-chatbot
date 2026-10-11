@@ -56,10 +56,12 @@ export default {
             container: 'var(--theme-bg-container)',
             chat: 'var(--theme-bg-chat)',
             "chat-input": 'var(--theme-bg-chat-input)',
+            "popup-menu": 'var(--theme-popup-menu-bg)',
           },
           text: {
             primary: 'var(--theme-text-primary)',
             secondary: 'var(--theme-text-secondary)',
+            placeholder: 'var(--theme-placeholder)',
           },
           sidebar: {
             item: {
@@ -99,6 +101,16 @@ export default {
           "file-picker": {
             hover: 'var(--theme-file-picker-hover)',
           },
+          attachment: {
+            bg: 'var(--theme-attachment-bg)',
+            'error-bg': 'var(--theme-attachment-error-bg)',
+            'success-bg': 'var(--theme-attachment-success-bg)',
+            text: 'var(--theme-attachment-text)',
+            'text-secondary': 'var(--theme-attachment-text-secondary)',
+            'icon': 'var(--theme-attachment-icon)',
+            'icon-spinner': 'var(--theme-attachment-icon-spinner)',
+            'icon-spinner-bg': 'var(--theme-attachment-icon-spinner-bg)',
+          },
           home: {
             text: 'var(--theme-home-text)',
             "text-secondary": 'var(--theme-home-text-secondary)',
@@ -131,7 +143,16 @@ export default {
             "button-text": 'var(--theme-checklist-button-text)',
             "button-hover-bg": 'var(--theme-checklist-button-hover-bg)',
             "button-hover-border": 'var(--theme-checklist-button-hover-border)',
-          }
+          },
+          button: {
+            text: 'var(--theme-button-text)',
+            'code-hover-text': 'var(--theme-button-code-hover-text)',
+            'code-hover-bg': 'var(--theme-button-code-hover-bg)',
+            'disable-hover-text': 'var(--theme-button-disable-hover-text)',
+            'disable-hover-bg': 'var(--theme-button-disable-hover-bg)',
+            'delete-hover-text': 'var(--theme-button-delete-hover-text)',
+            'delete-hover-bg': 'var(--theme-button-delete-hover-bg)',
+          },
         },
       },
       backgroundImage: {
@@ -179,7 +200,8 @@ export default {
         "pulse-glow": "pulse-glow 1.5s infinite",
         'fade-in': 'fade-in 0.3s ease-out',
         'slide-up': 'slide-up 0.4s ease-out forwards',
-        'bounce-subtle': 'bounce-subtle 2s ease-in-out infinite'
+        'bounce-subtle': 'bounce-subtle 2s ease-in-out infinite',
+        shimmer: 'shimmer 3s linear infinite'
       },
       keyframes: {
         sweep: {
@@ -225,6 +247,10 @@ export default {
         'bounce-subtle': {
           '0%, 100%': { transform: 'translateY(0)' },
           '50%': { transform: 'translateY(-2px)' }
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '200% 0' },
+          '100%': { backgroundPosition: '-200% 0' }
         }
       }
     }
@@ -268,6 +294,36 @@ export default {
   plugins: [
     function ({ addVariant }) {
       addVariant('light', '.light &') // Add the `light:` variant
+      addVariant('pwa', '.pwa &') // Add the `pwa:` variant
     },
+    // The `animate-in`/`animate-out` enter+exit utilities from `tailwindcss-animate`,
+    // reproduced for the subset of modifiers we use so components copied from
+    // shadcn-based libraries keep their original class strings.
+    function ({ addBase, addUtilities }) {
+      addBase({
+        '@keyframes enter': {
+          from: {
+            opacity: 'var(--tw-enter-opacity, 1)',
+            transform:
+              'translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)'
+          }
+        },
+        '@keyframes exit': {
+          to: {
+            opacity: 'var(--tw-exit-opacity, 1)',
+            transform:
+              'translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0)'
+          }
+        }
+      })
+      addUtilities({
+        '.animate-in': { animationName: 'enter', animationDuration: '150ms', animationFillMode: 'both' },
+        '.animate-out': { animationName: 'exit', animationDuration: '150ms', animationFillMode: 'both' },
+        '.fade-in-0': { '--tw-enter-opacity': '0' },
+        '.fade-out-0': { '--tw-exit-opacity': '0' },
+        '.slide-in-from-top-2': { '--tw-enter-translate-y': '-0.5rem' },
+        '.slide-out-to-top-2': { '--tw-exit-translate-y': '-0.5rem' }
+      })
+    }
   ]
 }

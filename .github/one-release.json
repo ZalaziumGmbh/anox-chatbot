@@ -1,0 +1,15 @@
+{
+  "revision": "759a7ea64757bf286e56f263f383f021bd3027ec",
+  "run_id": 38118387153,
+  "digest": "sha256:0edabb310641decb24ed123f4f282627f6a0e6be53093035f21e1499b68fb458",
+  "previous_digest": "sha256:f7c9931101a891ef350d936afd0222d2f16bd0045f44466e1a2fccf710e5fd2e",
+  "backup_id": "59e84f17178d814088c9f8cdba5d008fc6b26287c474f69a73f6a495b98b3d3d",
+  "checks": [
+    "admin",
+    "workflow",
+    "persistence",
+    "isolated-restore",
+    "schema-rollback"
+  ],
+  "evidence": "https://github.com/ZalaziumGmbh/mastermind/pull/15"
+}

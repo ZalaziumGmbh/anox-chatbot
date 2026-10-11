@@ -1,0 +1,25 @@
+name: Review upstream release
+on:
+  schedule:
+    - cron: '15 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compare stable upstream with the qualified version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo useradd --create-home tester
+          sudo install -d -o tester -g tester /home/tester/upstream
+          sudo cp .github/one-upstream.json ci/check_upstream.py /home/tester/upstream/
+          sudo chown -R tester:tester /home/tester/upstream
+          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            GH_TOKEN="$GH_TOKEN" sh -c 'cd /home/tester/upstream && python3 check_upstream.py'

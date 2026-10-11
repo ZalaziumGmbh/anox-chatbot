@@ -3,7 +3,6 @@ import CommunityHubImportItemSteps from "..";
 import CTAButton from "@/components/lib/CTAButton";
 import { useEffect, useState } from "react";
 import HubItemComponent from "./HubItem";
-import PreLoader from "@/components/Preloader";
 
 function useGetCommunityHubItem({ importId, updateSettings }) {
   const [item, setItem] = useState(null);
@@ -44,7 +43,7 @@ export default function PullAndReview({ settings, setSettings, setStep }) {
           </h2>
 
           {loading && (
-            <div className="flex h-[200px] min-w-[746px] rounded-lg animate-pulse">
+            <div className="flex h-[200px] w-full rounded-lg animate-pulse">
               <div className="w-full h-full flex items-center justify-center">
                 <p className="text-sm text-theme-text-secondary">
                   Pulling item details from community hub...

@@ -1,46 +1,95 @@
+const { reasoningParams } = require("../../../helpers/reasoningEffort");
 const OpenAI = require("openai");
 const Provider = require("./ai-provider.js");
 const InheritMultiple = require("./helpers/classes.js");
 const UnTooled = require("./helpers/untooled.js");
 const {
+  tooledStream,
+  tooledComplete,
+  temperatureParam,
+} = require("./helpers/tooled.js");
+const { RetryError } = require("../error.js");
+const {
+  LMStudioLLM,
   parseLMStudioBasePath,
 } = require("../../../AiProviders/lmStudio/index.js");
 
 /**
  * The agent provider for the LMStudio.
+ * Supports true OpenAI-compatible tool calling when the model supports it,
+ * falling back to the UnTooled prompt-based approach otherwise.
  */
 class LMStudioProvider extends InheritMultiple([Provider, UnTooled]) {
   model;
 
   /**
-   *
-   * @param {{model?: string}} config
+   * @param {{model?: string, reasoningEffort?: string|null}} config
    */
   constructor(config = {}) {
     super();
-    const model =
-      config?.model || process.env.LMSTUDIO_MODEL_PREF || "Loaded from Chat UI";
+    this.providerTag = "lmstudio";
+    const model = config?.model || process.env.LMSTUDIO_MODEL_PREF;
+    if (!model) throw new Error("LMStudio must have a valid model set.");
+
+    const apiKey = process.env.LMSTUDIO_AUTH_TOKEN ?? null;
     const client = new OpenAI({
       baseURL: parseLMStudioBasePath(process.env.LMSTUDIO_BASE_PATH),
-      apiKey: null,
-      maxRetries: 3,
+      apiKey,
     });
 
     this._client = client;
     this.model = model;
+    this.reasoningEffort = config?.reasoningEffort ?? null;
     this.verbose = true;
+    this._supportsToolCalling = null;
   }
 
   get client() {
     return this._client;
   }
 
+  /**
+   * The reasoning portion of the request body. The effort is validated against
+   * the model before the provider is built, so it only needs mapping here.
+   * @returns {object}
+   */
+  get reasoningConfig() {
+    return reasoningParams("lmstudio", this.reasoningEffort, this.model);
+  }
+
+  get supportsAgentStreaming() {
+    return true;
+  }
+
+  /**
+   * Whether the loaded model supports native OpenAI-compatible tool calling.
+   * Checks the LMStudio /api/v1/models endpoint for the model's capabilities.
+   * @returns {Promise<boolean>}
+   */
+  async supportsNativeToolCalling() {
+    if (this.optsOutOfNativeToolCallingViaEnv(this.providerTag)) return false;
+    if (this._supportsToolCalling !== null) return this._supportsToolCalling;
+    const lmstudio = new LMStudioLLM(null, this.model);
+    const capabilities = await lmstudio.getModelCapabilities();
+    this._supportsToolCalling = capabilities.tools === true;
+    return this._supportsToolCalling;
+  }
+
+  /** @returns {Promise<boolean>} */
+  async isModelLoaded() {
+    return await LMStudioLLM.isModelLoaded(this.model);
+  }
+
+  // ---- UnTooled callbacks (used when native tool calling is not supported) ----
+
   async #handleFunctionCallChat({ messages = [] }) {
+    await LMStudioLLM.cacheContextWindows();
     return await this.client.chat.completions
       .create({
         model: this.model,
-        temperature: 0,
+        ...temperatureParam(this.temperature),
         messages,
+        ...this.reasoningConfig,
       })
       .then((result) => {
         if (!result.hasOwnProperty("choices"))
@@ -54,68 +103,112 @@ class LMStudioProvider extends InheritMultiple([Provider, UnTooled]) {
       });
   }
 
+  async #handleFunctionCallStream({ messages = [] }) {
+    await LMStudioLLM.cacheContextWindows();
+    return await this.client.chat.completions.create({
+      model: this.model,
+      ...temperatureParam(this.temperature),
+      stream: true,
+      messages,
+      ...this.reasoningConfig,
+    });
+  }
+
   /**
-   * Create a completion based on the received messages.
-   *
-   * @param messages A list of messages to send to the API.
-   * @param functions
-   * @returns The completion.
+   * Stream a chat completion with tool calling support.
+   * Uses native tool calling when supported, otherwise falls back to UnTooled.
+   */
+  async stream(messages, functions = [], eventHandler = null) {
+    const useNative = await this.supportsNativeToolCalling();
+
+    if (!useNative) {
+      return await UnTooled.prototype.stream.call(
+        this,
+        messages,
+        functions,
+        this.#handleFunctionCallStream.bind(this),
+        eventHandler
+      );
+    }
+
+    this.providerLog(
+      "Provider.stream (tooled) - will process this chat completion."
+    );
+
+    try {
+      await LMStudioLLM.cacheContextWindows();
+      return await tooledStream(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        eventHandler,
+        { provider: this }
+      );
+    } catch (error) {
+      console.error(error.message, error);
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Create a non-streaming completion with tool calling support.
+   * Uses native tool calling when supported, otherwise falls back to UnTooled.
    */
   async complete(messages, functions = []) {
+    const useNative = await this.supportsNativeToolCalling();
+
+    if (!useNative) {
+      return await UnTooled.prototype.complete.call(
+        this,
+        messages,
+        functions,
+        this.#handleFunctionCallChat.bind(this)
+      );
+    }
+
     try {
-      let completion;
-      if (functions.length > 0) {
-        const { toolCall, text } = await this.functionCall(
-          messages,
-          functions,
-          this.#handleFunctionCallChat.bind(this)
-        );
+      await LMStudioLLM.cacheContextWindows();
+      const result = await tooledComplete(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        this.getCost.bind(this),
+        { provider: this }
+      );
 
-        if (toolCall !== null) {
-          this.providerLog(`Valid tool call found - running ${toolCall.name}.`);
-          this.deduplicator.trackRun(toolCall.name, toolCall.arguments);
-          return {
-            result: null,
-            functionCall: {
-              name: toolCall.name,
-              arguments: toolCall.arguments,
-            },
-            cost: 0,
-          };
-        }
-        completion = { content: text };
+      if (result.retryWithError) {
+        return this.complete([...messages, result.retryWithError], functions);
       }
 
-      if (!completion?.content) {
-        this.providerLog(
-          "Will assume chat completion without tool call inputs."
-        );
-        const response = await this.client.chat.completions.create({
-          model: this.model,
-          messages: this.cleanMsgs(messages),
-        });
-        completion = response.choices[0].message;
-      }
-
-      // The UnTooled class inherited Deduplicator is mostly useful to prevent the agent
-      // from calling the exact same function over and over in a loop within a single chat exchange
-      // _but_ we should enable it to call previously used tools in a new chat interaction.
-      this.deduplicator.reset("runs");
-      return {
-        result: completion.content,
-        cost: 0,
-      };
+      return result;
     } catch (error) {
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
       throw error;
     }
   }
 
   /**
    * Get the cost of the completion.
-   *
+   * Stubbed since LMStudio has no cost basis.
    * @param _usage The completion to get the cost for.
    * @returns The cost of the completion.
-   * Stubbed since LMStudio has no cost basis.
    */
   getCost(_usage) {
     return 0;

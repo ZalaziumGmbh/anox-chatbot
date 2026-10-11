@@ -86,7 +86,9 @@ async function messageArrayCompressor(llm, messages = [], rawHistory = []) {
 
     // Split context from system prompt - cannonball since its over the window.
     // We assume the context + user prompt is enough tokens to fit.
-    const [prompt, context = ""] = system.content.split("Context:");
+    // Split at the "Context:" header providers append before [CONTEXT 0], since
+    // the workspace prompt or a document chunk can also contain "Context:".
+    const { prompt, context } = splitSystemContext(system.content);
     let compressedPrompt;
     let compressedContext;
 
@@ -187,6 +189,25 @@ async function messageArrayCompressor(llm, messages = [], rawHistory = []) {
     compressedPrompt,
   ]);
   return [cSystem, ...cHistory, cPrompt];
+}
+
+/**
+ * Splits a system prompt into the instruction and the appended context block.
+ * Providers append retrieved chunks as "\nContext:\n[CONTEXT 0]:..." after the
+ * workspace prompt, so the first occurrence of that header marks the split.
+ * Without it no context was appended and the whole content is the prompt,
+ * even if the prompt itself says "Context:".
+ * @param {string} content - The system prompt content.
+ * @returns {{prompt: string, context: string}}
+ */
+function splitSystemContext(content = "") {
+  const header = "Context:";
+  const idx = content.indexOf(`${header}\n[CONTEXT 0]:`);
+  if (idx === -1) return { prompt: content, context: "" };
+  return {
+    prompt: content.slice(0, idx),
+    context: content.slice(idx + header.length),
+  };
 }
 
 // Implementation of messageArrayCompressor, but for string only completion models
@@ -384,7 +405,7 @@ function fillSourceWindow({
   searchResults = [], // Sources from similarity search
   history = [], // Raw history
   filterIdentifiers = [], // pinned document sources
-} = config) {
+} = {}) {
   const sources = [...searchResults];
 
   if (sources.length >= nDocs || history.length === 0) {
@@ -407,7 +428,7 @@ function fillSourceWindow({
   // Looking at this function by itself you may think that this loop could be extreme for long history chats,
   // but this was already handled where `history` we derived. This comes from `recentChatHistory` which
   // includes a limit for history (default: 20). So this loop does not look as extreme as on first glance.
-  for (const chat of history.reverse()) {
+  for (const chat of [...history].reverse()) {
     if (sources.length >= nDocs) {
       log(
         `Citations backfilled to ${nDocs} references from ${searchResults.length} original citations.`

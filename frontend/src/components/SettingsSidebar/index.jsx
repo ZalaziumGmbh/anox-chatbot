@@ -4,15 +4,16 @@ import useLogo from "@/hooks/useLogo";
 import {
   House,
   List,
-  Robot,
   Flask,
   Gear,
   UserCircleGear,
   PencilSimpleLine,
   Nut,
   Toolbox,
-  Globe,
+  Plugs,
 } from "@phosphor-icons/react";
+import AgentIcon from "@/media/animations/agent-static.png";
+import CommunityHubIcon from "@/media/illustrations/community-hub.png";
 import useUser from "@/hooks/useUser";
 import { isMobile } from "react-device-detect";
 import Footer from "../Footer";
@@ -22,6 +23,7 @@ import showToast from "@/utils/toast";
 import System from "@/models/system";
 import Option from "./MenuOption";
 import { CanViewChatHistoryProvider } from "../CanViewChatHistory";
+import useAppVersion from "@/hooks/useAppVersion";
 
 export default function SettingsSidebar() {
   const { t } = useTranslation();
@@ -68,19 +70,19 @@ export default function SettingsSidebar() {
           style={{
             transform: showSidebar ? `translateX(0vw)` : `translateX(-100vw)`,
           }}
-          className={`z-99 fixed top-0 left-0 transition-all duration-500 w-[100vw] h-[100vh]`}
+          className={`z-99 fixed top-0 left-0 transition-all duration-500 w-[100vw] h-[100vh] supports-[height:100dvh]:h-[100dvh]`}
         >
           <div
             className={`${
               showBgOverlay
                 ? "transition-all opacity-1"
                 : "transition-none opacity-0"
-            }  duration-500 fixed top-0 left-0 bg-theme-bg-secondary bg-opacity-75 w-screen h-screen`}
+            }  duration-500 fixed top-0 left-0 bg-theme-bg-secondary bg-opacity-75 w-screen h-[100vh] supports-[height:100dvh]:h-[100dvh]`}
             onClick={() => setShowSidebar(false)}
           />
           <div
             ref={sidebarRef}
-            className="h-[100vh] fixed top-0 left-0 rounded-r-[26px] bg-theme-bg-sidebar w-[80%] p-[18px]"
+            className="h-[100vh] supports-[height:100dvh]:h-[100dvh] fixed top-0 left-0 rounded-r-[26px] bg-theme-bg-sidebar w-[80%] p-[18px]"
           >
             <div className="w-full h-full flex flex-col overflow-x-hidden items-between">
               {/* Header Information */}
@@ -119,6 +121,7 @@ export default function SettingsSidebar() {
                     >
                       {t("settings.privacy")}
                     </Link>
+                    <AppVersion />
                   </div>
                 </div>
               </div>
@@ -137,7 +140,7 @@ export default function SettingsSidebar() {
       <div>
         <Link
           to={paths.home()}
-          className="flex shrink-0 max-w-[55%] items-center justify-start mx-[38px] my-[18px]"
+          className="flex shrink-0 items-center justify-start mx-[20.5px] my-[18px]"
         >
           <img
             src={logo}
@@ -169,6 +172,7 @@ export default function SettingsSidebar() {
                   >
                     {t("settings.privacy")}
                   </Link>
+                  <AppVersion />
                 </div>
               </div>
             </div>
@@ -242,6 +246,12 @@ const SidebarOptions = ({ user = null, t }) => (
               roles: ["admin"],
             },
             {
+              btnText: t("settings.image-generation"),
+              href: paths.settings.imageGenerationPreference(),
+              flex: true,
+              roles: ["admin"],
+            },
+            {
               btnText: t("settings.voice-speech"),
               href: paths.settings.audioPreference(),
               flex: true,
@@ -250,6 +260,12 @@ const SidebarOptions = ({ user = null, t }) => (
             {
               btnText: t("settings.transcription"),
               href: paths.settings.transcriptionPreference(),
+              flex: true,
+              roles: ["admin"],
+            },
+            {
+              btnText: t("settings.model-router"),
+              href: paths.settings.modelRouters(),
               flex: true,
               roles: ["admin"],
             },
@@ -282,34 +298,53 @@ const SidebarOptions = ({ user = null, t }) => (
               href: paths.settings.invites(),
               roles: ["admin", "manager"],
             },
+            {
+              btnText: "Default System Prompt",
+              href: paths.settings.defaultSystemPrompt(),
+              flex: true,
+              roles: ["admin"],
+            },
           ]}
         />
         <Option
           btnText={t("settings.agent-skills")}
-          icon={<Robot className="h-5 w-5 flex-shrink-0" />}
+          icon={
+            <img
+              src={AgentIcon}
+              alt="Agent"
+              className="h-5 w-5 flex-shrink-0 light:invert"
+            />
+          }
           href={paths.settings.agentSkills()}
           user={user}
           flex={true}
           roles={["admin"]}
         />
         <Option
-          btnText="Community Hub"
-          icon={<Globe className="h-5 w-5 flex-shrink-0" />}
+          btnText={t("settings.community-hub.title")}
+          icon={
+            <img
+              src={CommunityHubIcon}
+              alt="Community Hub"
+              className="h-5 w-5 flex-shrink-0 light:invert"
+            />
+          }
+          user={user}
           childOptions={[
             {
-              btnText: "Explore Trending",
+              btnText: t("settings.community-hub.trending"),
               href: paths.communityHub.trending(),
               flex: true,
               roles: ["admin"],
             },
             {
-              btnText: "Your Account",
+              btnText: t("settings.community-hub.your-account"),
               href: paths.communityHub.authentication(),
               flex: true,
               roles: ["admin"],
             },
             {
-              btnText: "Import Item",
+              btnText: t("settings.community-hub.import-item"),
               href: paths.communityHub.importItem(),
               flex: true,
               roles: ["admin"],
@@ -319,10 +354,40 @@ const SidebarOptions = ({ user = null, t }) => (
         <Option
           btnText={t("settings.customization")}
           icon={<PencilSimpleLine className="h-5 w-5 flex-shrink-0" />}
-          href={paths.settings.appearance()}
           user={user}
-          flex={true}
-          roles={["admin", "manager"]}
+          childOptions={[
+            {
+              btnText: t("settings.interface"),
+              href: paths.settings.interface(),
+              flex: true,
+              roles: ["admin", "manager"],
+            },
+            {
+              btnText: t("settings.branding"),
+              href: paths.settings.branding(),
+              flex: true,
+              roles: ["admin", "manager"],
+            },
+            {
+              btnText: t("settings.chat"),
+              href: paths.settings.chat(),
+              flex: true,
+              roles: ["admin", "manager"],
+            },
+          ]}
+        />
+        <Option
+          btnText={t("settings.channels")}
+          icon={<Plugs className="h-5 w-5 flex-shrink-0" />}
+          user={user}
+          childOptions={[
+            {
+              btnText: t("settings.available-channels.telegram"),
+              href: paths.settings.telegram(),
+              flex: true,
+              hidden: !!user,
+            },
+          ]}
         />
         <Option
           btnText={t("settings.tools")}
@@ -331,14 +396,8 @@ const SidebarOptions = ({ user = null, t }) => (
           childOptions={[
             {
               hidden: !canViewChatHistory,
-              btnText: t("settings.embed-chats"),
-              href: paths.settings.embedChats(),
-              flex: true,
-              roles: ["admin"],
-            },
-            {
               btnText: t("settings.embeds"),
-              href: paths.settings.embedSetup(),
+              href: paths.settings.embedChatWidgets(),
               flex: true,
               roles: ["admin"],
             },
@@ -347,6 +406,12 @@ const SidebarOptions = ({ user = null, t }) => (
               href: paths.settings.logs(),
               flex: true,
               roles: ["admin"],
+            },
+            {
+              btnText: t("settings.scheduled-jobs"),
+              href: paths.settings.scheduledJobs(),
+              flex: true,
+              hidden: !!user,
             },
             {
               btnText: t("settings.api-keys"),
@@ -365,6 +430,12 @@ const SidebarOptions = ({ user = null, t }) => (
               href: paths.settings.browserExtension(),
               flex: true,
               roles: ["admin", "manager"],
+            },
+            {
+              btnText: t("settings.mobile-app"),
+              href: paths.settings.mobile(),
+              flex: true,
+              roles: ["admin"],
             },
           ]}
         />
@@ -439,4 +510,19 @@ function HoldToReveal({ children, holdForMs = 3_000 }) {
 
   if (!showing) return null;
   return children;
+}
+
+function AppVersion() {
+  const { version, isLoading } = useAppVersion();
+  if (isLoading) return null;
+  return (
+    <Link
+      to={`https://github.com/Mintplex-Labs/anything-llm/releases/tag/v${version}`}
+      target="_blank"
+      rel="noreferrer"
+      className="text-theme-text-secondary light:opacity-80 opacity-50 text-xs mx-3"
+    >
+      v{version}
+    </Link>
+  );
 }

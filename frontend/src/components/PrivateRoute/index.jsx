@@ -7,6 +7,7 @@ import { AUTH_TIMESTAMP, AUTH_TOKEN, AUTH_USER } from "@/utils/constants";
 import { userFromStorage } from "@/utils/request";
 import System from "@/models/system";
 import UserMenu from "../UserMenu";
+import { KeyboardShortcutWrapper } from "@/utils/keyboardShortcuts";
 
 // Used only for Multi-user mode only as we permission specific pages based on auth role.
 // When in single user mode we just bypass any authchecks.
@@ -18,27 +19,18 @@ function useIsAuthenticated() {
 
   useEffect(() => {
     const validateSession = async () => {
-      const {
-        MultiUserMode,
-        RequiresAuth,
-        LLMProvider = null,
-        VectorDB = null,
-      } = await System.keys();
-
+      const onboardingComplete = await System.isOnboardingComplete();
+      const { MultiUserMode, RequiresAuth } = await System.keys();
       setMultiUserMode(MultiUserMode);
 
       // Check for the onboarding redirect condition
-      if (
-        !MultiUserMode &&
-        !RequiresAuth && // Not in Multi-user AND no password set.
-        !LLMProvider &&
-        !VectorDB
-      ) {
+      if (onboardingComplete === false) {
         setShouldRedirectToOnboarding(true);
         setIsAuthed(true);
         return;
       }
 
+      // Single User mode without password - no auth required
       if (!MultiUserMode && !RequiresAuth) {
         setIsAuthed(true);
         return;
@@ -57,6 +49,7 @@ function useIsAuthenticated() {
         return;
       }
 
+      // Multi-user mode checks
       const localUser = localStorage.getItem(AUTH_USER);
       const localAuthToken = localStorage.getItem(AUTH_TOKEN);
       if (!localUser || !localAuthToken) {
@@ -95,11 +88,15 @@ export function AdminRoute({ Component, hideUserMenu = false }) {
   const user = userFromStorage();
   return isAuthd && (user?.role === "admin" || !multiUserMode) ? (
     hideUserMenu ? (
-      <Component />
-    ) : (
-      <UserMenu>
+      <KeyboardShortcutWrapper>
         <Component />
-      </UserMenu>
+      </KeyboardShortcutWrapper>
+    ) : (
+      <KeyboardShortcutWrapper>
+        <UserMenu>
+          <Component />
+        </UserMenu>
+      </KeyboardShortcutWrapper>
     )
   ) : (
     <Navigate to={paths.home()} />
@@ -119,9 +116,30 @@ export function ManagerRoute({ Component }) {
 
   const user = userFromStorage();
   return isAuthd && (user?.role !== "default" || !multiUserMode) ? (
-    <UserMenu>
+    <KeyboardShortcutWrapper>
+      <UserMenu>
+        <Component />
+      </UserMenu>
+    </KeyboardShortcutWrapper>
+  ) : (
+    <Navigate to={paths.home()} />
+  );
+}
+
+// Allows access only in single user mode — redirects to home in multi-user mode
+export function SingleUserRoute({ Component }) {
+  const { isAuthd, shouldRedirectToOnboarding, multiUserMode } =
+    useIsAuthenticated();
+  if (isAuthd === null) return <FullScreenLoader />;
+
+  if (shouldRedirectToOnboarding) {
+    return <Navigate to={paths.onboarding.home()} />;
+  }
+
+  return isAuthd && !multiUserMode ? (
+    <KeyboardShortcutWrapper>
       <Component />
-    </UserMenu>
+    </KeyboardShortcutWrapper>
   ) : (
     <Navigate to={paths.home()} />
   );
@@ -136,9 +154,11 @@ export default function PrivateRoute({ Component }) {
   }
 
   return isAuthd ? (
-    <UserMenu>
-      <Component />
-    </UserMenu>
+    <KeyboardShortcutWrapper>
+      <UserMenu>
+        <Component />
+      </UserMenu>
+    </KeyboardShortcutWrapper>
   ) : (
     <Navigate to={paths.login(true)} />
   );

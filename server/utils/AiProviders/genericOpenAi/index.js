@@ -1,4 +1,5 @@
 const { NativeEmbedder } = require("../../EmbeddingEngines/native");
+const { isAbortError } = require("../../helpers/abortSignals");
 const {
   LLMPerformanceMonitor,
 } = require("../../helpers/chat/LLMPerformanceMonitor");
@@ -6,8 +7,16 @@ const {
   formatChatHistory,
   writeResponseChunk,
   clientAbortedHandler,
+  extractReasoningContent,
 } = require("../../helpers/chat/responses");
+const { v4: uuidv4 } = require("uuid");
 const { toValidNumber } = require("../../http");
+const { getAnythingLLMUserAgent } = require("../../../endpoints/utils");
+const { attachmentToContentBlock } = require("../../helpers/attachments");
+const {
+  maxTokensParam,
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled.js");
 
 class GenericOpenAiLLM {
   constructor(embedder = null, modelPreference = null) {
@@ -17,10 +26,15 @@ class GenericOpenAiLLM {
         "GenericOpenAI must have a valid base path to use for the api."
       );
 
+    this.className = "GenericOpenAiLLM";
     this.basePath = process.env.GENERIC_OPEN_AI_BASE_PATH;
     this.openai = new OpenAIApi({
       baseURL: this.basePath,
       apiKey: process.env.GENERIC_OPEN_AI_API_KEY ?? null,
+      defaultHeaders: {
+        "User-Agent": getAnythingLLMUserAgent(),
+        ...GenericOpenAiLLM.parseCustomHeaders(),
+      },
     });
     this.model =
       modelPreference ?? process.env.GENERIC_OPEN_AI_MODEL_PREF ?? null;
@@ -36,12 +50,46 @@ class GenericOpenAiLLM {
     };
 
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
     this.log(`Inference API: ${this.basePath} Model: ${this.model}`);
   }
 
   log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
+  }
+
+  /**
+   * Parses custom headers from a CSV-formatted environment variable.
+   * Format: "Header-Name:value,Another-Header:value2"
+   * @returns {Object} Object with header key-value pairs
+   */
+  /**
+   * Request field name for the output token budget. Defaults to `max_tokens`;
+   * set GENERIC_OPEN_AI_MODEL_MAX_TOKEN_KEY for backends that expect a
+   * different field (eg: `max_completion_tokens`).
+   * @returns {string}
+   */
+  static maxTokensKey() {
+    return process.env.GENERIC_OPEN_AI_MODEL_MAX_TOKEN_KEY || "max_tokens";
+  }
+
+  static parseCustomHeaders() {
+    const customHeadersEnv = process.env.GENERIC_OPEN_AI_CUSTOM_HEADERS;
+    if (!customHeadersEnv) return {};
+
+    const headers = {};
+    const pairs = customHeadersEnv.split(",");
+
+    for (const pair of pairs) {
+      const colonIndex = pair.indexOf(":"); // only split on first colon for key/value separation
+      if (colonIndex === -1) continue;
+
+      const key = pair.substring(0, colonIndex).trim();
+      const value = pair.substring(colonIndex + 1).trim();
+
+      if (key && value) headers[key] = value;
+    }
+
+    return headers;
   }
 
   #appendContext(contextTexts = []) {
@@ -57,6 +105,7 @@ class GenericOpenAiLLM {
   }
 
   streamingEnabled() {
+    if (process.env.GENERIC_OPENAI_STREAMING_DISABLED === "true") return false;
     return "streamGetChatCompletion" in this;
   }
 
@@ -106,13 +155,9 @@ class GenericOpenAiLLM {
 
     const content = [{ type: "text", text: userPrompt }];
     for (let attachment of attachments) {
-      content.push({
-        type: "image_url",
-        image_url: {
-          url: attachment.contentString,
-          detail: "high",
-        },
-      });
+      content.push(
+        attachmentToContentBlock(attachment, { imageDetail: "high" })
+      );
     }
     return content.flat();
   }
@@ -144,28 +189,62 @@ class GenericOpenAiLLM {
   }
 
   /**
+   * Extracts accurate generation-only timing and token count from a llama.cpp
+   * response or streaming chunk. Mutates the provided usage object in place
+   * so it can be used by both streaming and non-streaming code paths.
+   * @param {Object} response - the API response or final streaming chunk
+   * @param {Object} usage - the usage object to mutate
+   */
+  #extractLlamaCppTimings(response, usage) {
+    if (!response || !response.timings) return;
+
+    if (response.timings.hasOwnProperty("predicted_n"))
+      usage.completion_tokens = Number(response.timings.predicted_n);
+
+    if (response.timings.hasOwnProperty("predicted_ms"))
+      usage.duration = Number(response.timings.predicted_ms) / 1000;
+  }
+
+  /**
    * Parses and prepends reasoning from the response and returns the full text response.
    * @param {Object} response
    * @returns {string}
    */
   #parseReasoningFromResponse({ message }) {
     let textResponse = message?.content;
-    if (
-      !!message?.reasoning_content &&
-      message.reasoning_content.trim().length > 0
-    )
-      textResponse = `<think>${message.reasoning_content}</think>${textResponse}`;
+    const reasoning = extractReasoningContent(message);
+    if (reasoning && reasoning.trim().length > 0)
+      textResponse = `<think>${reasoning}</think>${textResponse}`;
     return textResponse;
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
+  /**
+   * Includes the usage in the response if the ENV flag is set
+   * using the stream_options: { include_usage: true } option. This is available via ENV
+   * because some providers will crash with invalid options.
+   * @returns {Object}
+   */
+  #includeStreamOptionsUsage() {
+    if (!("GENERIC_OPEN_AI_REPORT_USAGE" in process.env)) return {};
+    if (process.env.GENERIC_OPEN_AI_REPORT_USAGE !== "true") return {};
+    return {
+      stream_options: {
+        include_usage: true,
+      },
+    };
+  }
+
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
       this.openai.chat.completions
         .create({
           model: this.model,
           messages,
-          temperature,
-          max_tokens: this.maxTokens,
+          ...temperatureParam(temperature),
+          ...maxTokensParam(this.maxTokens, GenericOpenAiLLM.maxTokensKey()),
         })
         .catch((e) => {
           throw new Error(e.message);
@@ -178,32 +257,44 @@ class GenericOpenAiLLM {
     )
       return null;
 
+    const usage = {
+      prompt_tokens: result.output?.usage?.prompt_tokens || 0,
+      completion_tokens: result.output?.usage?.completion_tokens || 0,
+      total_tokens: result.output?.usage?.total_tokens || 0,
+      duration: result.duration,
+    };
+    this.#extractLlamaCppTimings(result.output, usage);
+
     return {
       textResponse: this.#parseReasoningFromResponse(result.output.choices[0]),
       metrics: {
-        prompt_tokens: result.output?.usage?.prompt_tokens || 0,
-        completion_tokens: result.output?.usage?.completion_tokens || 0,
-        total_tokens: result.output?.usage?.total_tokens || 0,
-        outputTps:
-          (result.output?.usage?.completion_tokens || 0) / result.duration,
-        duration: result.duration,
+        ...usage,
+        outputTps: usage.completion_tokens / usage.duration,
+        model: this.model,
+        provider: this.className,
+        timestamp: new Date(),
       },
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.openai.chat.completions.create({
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
+    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream({
+      func: this.openai.chat.completions.create({
         model: this.model,
         stream: true,
         messages,
-        temperature,
-        max_tokens: this.maxTokens,
+        ...temperatureParam(temperature),
+        ...maxTokensParam(this.maxTokens, GenericOpenAiLLM.maxTokensKey()),
+        ...this.#includeStreamOptionsUsage(),
       }),
-      messages
-      // runPromptTokenCalculation: true - There is not way to know if the generic provider connected is returning
-      // the correct usage metrics if any at all since any provider could be connected.
-    );
+      messages,
+      runPromptTokenCalculation: true,
+      modelTag: this.model,
+      provider: this.className,
+    });
     return measuredStreamRequest;
   }
 
@@ -235,7 +326,7 @@ class GenericOpenAiLLM {
         for await (const chunk of stream) {
           const message = chunk?.choices?.[0];
           const token = message?.delta?.content;
-          const reasoningToken = message?.delta?.reasoning_content;
+          const reasoningToken = extractReasoningContent(message?.delta);
 
           if (
             chunk.hasOwnProperty("usage") && // exists
@@ -322,6 +413,8 @@ class GenericOpenAiLLM {
               close: true,
               error: false,
             });
+            this.#extractLlamaCppTimings(chunk, usage);
+
             response.removeListener("close", handleAbort);
             stream?.endMeasurement(usage);
             resolve(fullText);
@@ -329,6 +422,12 @@ class GenericOpenAiLLM {
           }
         }
       } catch (e) {
+        // Cancelling the upstream request rejects the iterator - that is the
+        // client leaving, not a failure, so it is not reported as an error.
+        if (isAbortError(e)) {
+          stream?.endMeasurement(usage);
+          return clientAbortedHandler(resolve, fullText);
+        }
         console.log(`\x1b[43m\x1b[34m[STREAMING ERROR]\x1b[0m ${e.message}`);
         writeResponseChunk(response, {
           uuid,
@@ -342,6 +441,58 @@ class GenericOpenAiLLM {
         resolve(fullText);
       }
     });
+  }
+
+  /**
+   * Check if a capability is supported via ENV configuration.
+   * `tools` is opt-out (enabled unless explicitly disabled), all others are opt-in.
+   * @param {'tools' | 'reasoning' | 'imageGeneration' | 'vision'} capability
+   * @returns {boolean}
+   */
+  #supportsCapabilityFromENV(capability = "") {
+    switch (capability) {
+      case "tools":
+        return !process.env.PROVIDER_DISABLE_NATIVE_TOOL_CALLING?.includes(
+          "generic-openai"
+        );
+      case "reasoning":
+        return !!process.env.PROVIDER_SUPPORTS_REASONING?.includes(
+          "generic-openai"
+        );
+      case "imageGeneration":
+        return !!process.env.PROVIDER_SUPPORTS_IMAGE_GENERATION?.includes(
+          "generic-openai"
+        );
+      case "vision":
+        return !!process.env.PROVIDER_SUPPORTS_VISION?.includes(
+          "generic-openai"
+        );
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Returns the capabilities of the model.
+   * @returns {Promise<{tools: 'unknown' | boolean, reasoning: 'unknown' | boolean, imageGeneration: 'unknown' | boolean, vision: 'unknown' | boolean}>}
+   */
+  async getModelCapabilities() {
+    try {
+      return {
+        tools: this.#supportsCapabilityFromENV("tools"),
+        reasoning: this.#supportsCapabilityFromENV("reasoning"),
+        imageGeneration: this.#supportsCapabilityFromENV("imageGeneration"),
+        vision: this.#supportsCapabilityFromENV("vision"),
+      };
+    } catch (error) {
+      console.error("Error getting model capabilities:", error);
+      return {
+        tools: "unknown",
+        reasoning: "unknown",
+        imageGeneration: "unknown",
+        vision: "unknown",
+      };
+    }
   }
 
   // Simple wrapper for dynamic embedder & normalize interface for all LLM implementations

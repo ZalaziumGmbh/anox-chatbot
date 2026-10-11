@@ -1,7 +1,14 @@
 process.env.NODE_ENV === "development"
   ? require("dotenv").config({ path: `.env.${process.env.NODE_ENV}` })
   : require("dotenv").config();
-const { viewLocalFiles, normalizePath, isWithin } = require("../utils/files");
+const {
+  normalizePath,
+  isWithin,
+  listFolders,
+  getDocumentsByFolder,
+  searchDocuments,
+  getDocumentsByDocPaths,
+} = require("../utils/files");
 const { purgeDocument, purgeFolder } = require("../utils/files/purgeDocument");
 const { getVectorDbClass } = require("../utils/helpers");
 const { updateENV, dumpENV } = require("../utils/helpers/updateENV");
@@ -12,7 +19,11 @@ const {
   multiUserMode,
   queryParams,
 } = require("../utils/http");
-const { handleAssetUpload, handlePfpUpload } = require("../utils/files/multer");
+const {
+  handleAssetUpload,
+  handlePfpUpload,
+  handleAudioUpload,
+} = require("../utils/files/multer");
 const { v4 } = require("uuid");
 const { SystemSettings } = require("../models/systemSettings");
 const { User } = require("../models/user");
@@ -30,10 +41,11 @@ const {
   isDefaultFilename,
 } = require("../utils/files/logo");
 const { Telemetry } = require("../models/telemetry");
-const { WelcomeMessages } = require("../models/welcomeMessages");
 const { ApiKey } = require("../models/apiKeys");
 const { getCustomModels } = require("../utils/helpers/customModels");
 const { WorkspaceChats } = require("../models/workspaceChats");
+const { WorkspaceThread } = require("../models/workspaceThread");
+const { WorkspaceParsedFiles } = require("../models/workspaceParsedFiles");
 const {
   flexUserRoleValid,
   ROLES,
@@ -51,13 +63,19 @@ const {
 const { SlashCommandPresets } = require("../models/slashCommandsPresets");
 const { EncryptionManager } = require("../utils/EncryptionManager");
 const { BrowserExtensionApiKey } = require("../models/browserExtensionApiKey");
+const { MobileDevice } = require("../models/mobileDevice");
 const {
   chatHistoryViewable,
 } = require("../utils/middleware/chatHistoryViewable");
-const { simpleSSOEnabled } = require("../utils/middleware/simpleSSOEnabled");
+const {
+  simpleSSOEnabled,
+  simpleSSOLoginDisabled,
+} = require("../utils/middleware/simpleSSOEnabled");
 const { TemporaryAuthToken } = require("../models/temporaryAuthToken");
 const { SystemPromptVariables } = require("../models/systemPromptVariables");
-const { VALID_COMMANDS } = require("../utils/chats");
+const { isReservedCommand } = require("../utils/chats");
+const { AgentSkillWhitelist } = require("../models/agentSkillWhitelist");
+const { Memory } = require("../models/memory");
 
 function systemEndpoints(app) {
   if (!app) return;
@@ -75,6 +93,26 @@ function systemEndpoints(app) {
       return response.sendStatus(200).end();
     dumpENV();
     response.sendStatus(200).end();
+  });
+
+  app.get("/onboarding", async (_, response) => {
+    try {
+      const results = await SystemSettings.isOnboardingComplete();
+      response.status(200).json({ onboardingComplete: results });
+    } catch (e) {
+      console.error(e.message, e);
+      response.sendStatus(500).end();
+    }
+  });
+
+  app.post("/onboarding", [validatedRequest], async (_, response) => {
+    try {
+      await SystemSettings.markOnboardingComplete();
+      response.sendStatus(200).end();
+    } catch (e) {
+      console.error(e.message, e);
+      response.sendStatus(500).end();
+    }
   });
 
   app.get("/setup-complete", async (_, response) => {
@@ -111,11 +149,68 @@ function systemEndpoints(app) {
     }
   );
 
+  /**
+   * Refreshes the user object from the session from a provided token.
+   * This does not refresh the token itself - if that is expired or invalid, the user will be logged out.
+   * This simply keeps the user object in sync with the database over the course of the session.
+   * @returns {Promise<{success: boolean, user: Object | null, message: string | null}>}
+   */
+  app.get(
+    "/system/refresh-user",
+    [validatedRequest],
+    async (request, response) => {
+      try {
+        if (!multiUserMode(response))
+          return response
+            .status(200)
+            .json({ success: true, user: null, message: null });
+
+        const user = await userFromSession(request, response);
+        if (!user)
+          return response.status(200).json({
+            success: false,
+            user: null,
+            message: "Session expired or invalid.",
+          });
+
+        if (user.suspended)
+          return response.status(200).json({
+            success: false,
+            user: null,
+            message: "User is suspended.",
+          });
+
+        return response.status(200).json({
+          success: true,
+          user: User.filterFields(user),
+          message: null,
+        });
+      } catch (e) {
+        return response.status(500).json({
+          success: false,
+          user: null,
+          message: e.message,
+        });
+      }
+    }
+  );
+
   app.post("/request-token", async (request, response) => {
     try {
-      const bcrypt = require("bcrypt");
+      const bcrypt = require("bcryptjs");
 
       if (await SystemSettings.isMultiUserMode()) {
+        if (simpleSSOLoginDisabled()) {
+          response.status(403).json({
+            user: null,
+            valid: false,
+            token: null,
+            message:
+              "[005] Login via credentials has been disabled by the administrator.",
+          });
+          return;
+        }
+
         const { username, password } = reqBody(request);
         const existingUser = await User._get({ username: String(username) });
 
@@ -188,18 +283,18 @@ function systemEndpoints(app) {
           existingUser?.id
         );
 
-        // Check if the user has seen the recovery codes
+        // Generate a session token for the user then check if they have seen the recovery codes
+        // and if not, generate recovery codes and return them to the frontend.
+        const sessionToken = makeJWT(
+          { id: existingUser.id, username: existingUser.username },
+          process.env.JWT_EXPIRY
+        );
         if (!existingUser.seen_recovery_codes) {
           const plainTextCodes = await generateRecoveryCodes(existingUser.id);
-
-          // Return recovery codes to frontend
           response.status(200).json({
             valid: true,
             user: User.filterFields(existingUser),
-            token: makeJWT(
-              { id: existingUser.id, username: existingUser.username },
-              "30d"
-            ),
+            token: sessionToken,
             message: null,
             recoveryCodes: plainTextCodes,
           });
@@ -209,10 +304,7 @@ function systemEndpoints(app) {
         response.status(200).json({
           valid: true,
           user: User.filterFields(existingUser),
-          token: makeJWT(
-            { id: existingUser.id, username: existingUser.username },
-            "30d"
-          ),
+          token: sessionToken,
           message: null,
         });
         return;
@@ -245,7 +337,7 @@ function systemEndpoints(app) {
           valid: true,
           token: makeJWT(
             { p: new EncryptionManager().encrypt(password) },
-            "30d"
+            process.env.JWT_EXPIRY
           ),
           message: null,
         });
@@ -414,10 +506,48 @@ function systemEndpoints(app) {
   app.get(
     "/system/local-files",
     [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
-    async (_, response) => {
+    async (request, response) => {
       try {
-        const localFiles = await viewLocalFiles();
-        response.status(200).json({ localFiles });
+        const { folder, offset, limit } = queryParams(request);
+        if (folder) {
+          // Passed through as-is: getDocumentsByFolder clamps the window and
+          // understands `limit=all`.
+          const result = await getDocumentsByFolder(folder, { offset, limit });
+          response.status(result.code).json(result);
+        } else {
+          const localFiles = listFolders();
+          response.status(200).json({ localFiles });
+        }
+      } catch (e) {
+        console.error(e.message, e);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.get(
+    "/system/local-files/search",
+    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
+    async (request, response) => {
+      try {
+        const { q } = queryParams(request);
+        const results = await searchDocuments(q);
+        response.status(200).json({ results });
+      } catch (e) {
+        console.error(e.message, e);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.post(
+    "/system/local-files/by-docpaths",
+    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
+    async (request, response) => {
+      try {
+        const { docpaths = [] } = reqBody(request);
+        const documents = await getDocumentsByDocPaths(docpaths);
+        response.status(200).json({ documents });
       } catch (e) {
         console.error(e.message, e);
         response.sendStatus(500).end();
@@ -494,14 +624,26 @@ function systemEndpoints(app) {
           // Password is being disabled so directly unset everything to bypass validation.
           process.env.AUTH_TOKEN = "";
           process.env.JWT_SECRET = "";
+          if (process.env.NODE_ENV === "production") dumpENV();
         } else {
-          error = await updateENV(
+          // An all-asterisk value is indistinguishable from the UI's masked
+          // placeholder, so updateENV would silently drop it while JWT_SECRET
+          // still rotates - reject it before mutating anything.
+          if (/^\*+$/.test(String(newPassword))) {
+            response.status(200).json({
+              success: false,
+              error: "Password cannot consist of only asterisks (*).",
+            });
+            return;
+          }
+          const update = await updateENV(
             {
               AuthToken: newPassword,
               JWTSecret: v4(),
             },
             true
-          )?.error;
+          );
+          error = update?.error;
         }
         response.status(200).json({ success: !error, error });
       } catch (e) {
@@ -543,7 +685,13 @@ function systemEndpoints(app) {
           multi_user_mode: true,
         });
         await BrowserExtensionApiKey.migrateApiKeysToMultiUser(user.id);
-
+        await Memory.migrateToMultiUser(user.id);
+        await WorkspaceChats.migrateToMultiUser(user.id);
+        await WorkspaceThread.migrateToMultiUser(user.id);
+        await WorkspaceParsedFiles.migrateToMultiUser(user.id);
+        await MobileDevice.migrateDevicesToMultiUser(user.id);
+        await SlashCommandPresets.migrateToMultiUser(user.id);
+        await AgentSkillWhitelist.clearSingleUserWhitelist();
         await updateENV(
           {
             JWTSecret: process.env.JWT_SECRET || v4(),
@@ -579,8 +727,7 @@ function systemEndpoints(app) {
 
   app.get("/system/logo", async function (request, response) {
     try {
-      const darkMode =
-        !request?.query?.theme || request?.query?.theme === "default";
+      const darkMode = request?.query?.theme !== "light";
       const defaultFilename = getDefaultFilename(darkMode);
       const logoPath = await determineLogoFilepath(defaultFilename);
       const { found, buffer, size, mime } = fetchLogo(logoPath);
@@ -723,6 +870,57 @@ function systemEndpoints(app) {
       }
     }
   );
+  app.get(
+    "/system/default-system-prompt",
+    [validatedRequest, flexUserRoleValid([ROLES.all])],
+    async (_, response) => {
+      try {
+        const defaultSystemPrompt = await SystemSettings.get({
+          label: "default_system_prompt",
+        });
+
+        response.status(200).json({
+          success: true,
+          defaultSystemPrompt:
+            defaultSystemPrompt?.value ||
+            SystemSettings.saneDefaultSystemPrompt,
+          saneDefaultSystemPrompt: SystemSettings.saneDefaultSystemPrompt,
+        });
+      } catch (error) {
+        console.error("Error fetching default system prompt:", error);
+        response
+          .status(500)
+          .json({ success: false, message: "Internal server error" });
+      }
+    }
+  );
+
+  app.post(
+    "/system/default-system-prompt",
+    [validatedRequest, flexUserRoleValid([ROLES.admin])],
+    async (request, response) => {
+      try {
+        const { defaultSystemPrompt } = reqBody(request);
+        const { success, error } = await SystemSettings.updateSettings({
+          default_system_prompt: defaultSystemPrompt,
+        });
+        if (!success)
+          throw new Error(
+            error.message || "Failed to update default system prompt."
+          );
+        response.status(200).json({
+          success: true,
+          message: "Default system prompt updated successfully.",
+        });
+      } catch (error) {
+        console.error("Error updating default system prompt:", error);
+        response.status(500).json({
+          success: false,
+          message: error.message || "Internal server error",
+        });
+      }
+    }
+  );
 
   app.delete(
     "/system/remove-pfp",
@@ -834,50 +1032,6 @@ function systemEndpoints(app) {
     }
   );
 
-  app.get(
-    "/system/welcome-messages",
-    [validatedRequest, flexUserRoleValid([ROLES.all])],
-    async function (_, response) {
-      try {
-        const welcomeMessages = await WelcomeMessages.getMessages();
-        response.status(200).json({ success: true, welcomeMessages });
-      } catch (error) {
-        console.error("Error fetching welcome messages:", error);
-        response
-          .status(500)
-          .json({ success: false, message: "Internal server error" });
-      }
-    }
-  );
-
-  app.post(
-    "/system/set-welcome-messages",
-    [validatedRequest, flexUserRoleValid([ROLES.admin, ROLES.manager])],
-    async (request, response) => {
-      try {
-        const { messages = [] } = reqBody(request);
-        if (!Array.isArray(messages)) {
-          return response.status(400).json({
-            success: false,
-            message: "Invalid message format. Expected an array of messages.",
-          });
-        }
-
-        await WelcomeMessages.saveAll(messages);
-        return response.status(200).json({
-          success: true,
-          message: "Welcome messages saved successfully.",
-        });
-      } catch (error) {
-        console.error("Error processing the welcome messages:", error);
-        response.status(500).json({
-          success: true,
-          message: "Error saving the welcome messages.",
-        });
-      }
-    }
-  );
-
   app.get("/system/api-keys", [validatedRequest], async (_, response) => {
     try {
       if (response.locals.multiUserMode) {
@@ -901,17 +1055,17 @@ function systemEndpoints(app) {
   app.post(
     "/system/generate-api-key",
     [validatedRequest],
-    async (_, response) => {
+    async (request, response) => {
       try {
         if (response.locals.multiUserMode) {
           return response.sendStatus(401).end();
         }
 
-        const { apiKey, error } = await ApiKey.create();
-        await Telemetry.sendTelemetry("api_key_created");
+        const { name = null } = reqBody(request);
+        const { apiKey, error } = await ApiKey.create(null, name);
         await EventLogs.logEvent(
           "api_key_created",
-          {},
+          { name: apiKey?.name },
           response?.locals?.user?.id
         );
         return response.status(200).json({
@@ -959,11 +1113,17 @@ function systemEndpoints(app) {
     [validatedRequest, flexUserRoleValid([ROLES.admin])],
     async (request, response) => {
       try {
-        const { provider, apiKey = null, basePath = null } = reqBody(request);
+        const {
+          provider,
+          apiKey = null,
+          basePath = null,
+          options = {},
+        } = reqBody(request);
         const { models, error } = await getCustomModels(
           provider,
           apiKey,
-          basePath
+          basePath,
+          options
         );
         return response.status(200).json({
           models,
@@ -1101,10 +1261,12 @@ function systemEndpoints(app) {
       }
 
       const updates = {};
-      if (username)
+      // If the username is being changed, validate it.
+      // Otherwise, do not attempt to validate it to allow existing users to keep their username if not changing it.
+      if (username !== sessionUser.username)
         updates.username = User.validations.username(String(username));
       if (password) updates.password = String(password);
-      if (bio) updates.bio = String(bio);
+      if (bio || bio === "") updates.bio = String(bio);
 
       if (Object.keys(updates).length === 0) {
         response
@@ -1117,7 +1279,9 @@ function systemEndpoints(app) {
       response.status(200).json({ success, error });
     } catch (e) {
       console.error(e);
-      response.sendStatus(500).end();
+      response
+        .status(500)
+        .json({ success: false, error: e.message || "Internal server error" });
     }
   });
 
@@ -1147,7 +1311,7 @@ function systemEndpoints(app) {
           String(command)
         );
 
-        if (Object.keys(VALID_COMMANDS).includes(formattedCommand)) {
+        if (isReservedCommand(formattedCommand)) {
           return response.status(400).json({
             message:
               "Cannot create a preset with a command that matches a system command",
@@ -1186,7 +1350,7 @@ function systemEndpoints(app) {
           String(command)
         );
 
-        if (Object.keys(VALID_COMMANDS).includes(formattedCommand)) {
+        if (isReservedCommand(formattedCommand)) {
           return response.status(400).json({
             message:
               "Cannot update a preset to use a command that matches a system command",
@@ -1366,6 +1530,79 @@ function systemEndpoints(app) {
         response.status(500).json({
           success: false,
           error: `Failed to delete system prompt variable: ${error.message}`,
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/system/transcribe-audio",
+    [validatedRequest, flexUserRoleValid([ROLES.all]), handleAudioUpload],
+    async (request, response) => {
+      try {
+        if (!request.file?.buffer) {
+          return response
+            .status(400)
+            .json({ success: false, error: "No audio file provided." });
+        }
+
+        const provider = process.env.STT_PROVIDER || "native";
+        if (provider === "native") {
+          return response.status(400).json({
+            success: false,
+            error:
+              "Server-side transcription is disabled. Set STT_PROVIDER to a supported provider.",
+          });
+        }
+
+        const { getSTTProvider } = require("../utils/SpeechToText");
+        const stt = getSTTProvider();
+        const text = await stt.transcribe(
+          request.file.buffer,
+          request.file.originalname || "audio.webm"
+        );
+        return response.status(200).json({ success: true, text });
+      } catch (error) {
+        console.error("STT transcription error:", error);
+        return response.status(500).json({
+          success: false,
+          error: error.message || "Transcription failed",
+        });
+      }
+    }
+  );
+
+  app.post(
+    "/system/validate-sql-connection",
+    [validatedRequest, flexUserRoleValid([ROLES.admin])],
+    async (request, response) => {
+      const { engine, connectionString } = reqBody(request);
+      try {
+        if (!engine || !connectionString) {
+          return response.status(400).json({
+            success: false,
+            error: "Both engine and connection details are required.",
+          });
+        }
+
+        const {
+          validateConnection,
+        } = require("../utils/agents/aibitat/plugins/sql-agent/SQLConnectors");
+        const result = await validateConnection(engine, { connectionString });
+
+        if (!result.success) {
+          return response.status(200).json({
+            success: false,
+            error: `Unable to connect to ${engine}. Please verify your connection details.`,
+          });
+        }
+
+        response.status(200).json(result);
+      } catch (error) {
+        console.error("SQL validation error:", error);
+        response.status(500).json({
+          success: false,
+          error: `Unable to connect to ${engine}. Please verify your connection details.`,
         });
       }
     }

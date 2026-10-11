@@ -1,0 +1,41 @@
+name: Promote qualified Zalazium One release
+run-name: Chatbot promote
+on:
+  push:
+    branches: [zalazium-dev]
+    paths: ['.github/one-release.json', '.github/workflows/promote-zalazium-one.yaml', 'ci/promote_one.py']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: one-qualified-channel
+  cancel-in-progress: false
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/zalazium-dev'
+    runs-on: [self-hosted, Linux, X64, zalazium-eu, 'zalazium-eu-${{ github.run_id }}']
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require the German unprivileged publication account
+        run: test "$(id -un)" = tester
+      - name: Verify the exact successful candidate and recovery record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            python3 ci/promote_one.py --verify
+      - name: Publish only the reviewed compatible digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ secrets.DOCKER_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_TOKEN }}
+        run: |
+          env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            GH_TOKEN="$GH_TOKEN" GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            REGISTRY_USER="$REGISTRY_USER" REGISTRY_PASSWORD="$REGISTRY_PASSWORD" \
+            python3 ci/promote_one.py --publish

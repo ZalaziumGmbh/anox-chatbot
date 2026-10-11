@@ -3,6 +3,7 @@ import { Tooltip } from "react-tooltip";
 import { At } from "@phosphor-icons/react";
 import { useIsAgentSessionActive } from "@/utils/chat/agent";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 
 export default function AvailableAgentsButton({ showing, setShowAgents }) {
   const { t } = useTranslation();
@@ -15,13 +16,13 @@ export default function AvailableAgentsButton({ showing, setShowAgents }) {
       data-tooltip-content={t("chat_window.agents")}
       aria-label={t("chat_window.agents")}
       onClick={() => setShowAgents(!showing)}
-      className={`flex justify-center items-center cursor-pointer ${
+      className={`flex justify-center items-center cursor-pointer opacity-60 hover:opacity-100 light:opacity-100 light:hover:opacity-60 ${
         showing ? "!opacity-100" : ""
       }`}
     >
       <At
         color="var(--theme-sidebar-footer-icon-fill)"
-        className={`w-[22px] h-[22px] pointer-events-none text-theme-text-primary opacity-60 hover:opacity-100 light:opacity-100 light:hover:opacity-60`}
+        className="w-[20px] h-[20px] pointer-events-none text-theme-text-primary"
       />
       <Tooltip
         id="tooltip-agent-list-btn"
@@ -33,30 +34,26 @@ export default function AvailableAgentsButton({ showing, setShowAgents }) {
   );
 }
 
-function AbilityTag({ text }) {
-  return (
-    <div className="px-2 bg-theme-action-menu-item-hover text-theme-text-secondary text-xs w-fit rounded-sm">
-      <p>{text}</p>
-    </div>
-  );
-}
-
 export function AvailableAgents({
   showing,
   setShowing,
   sendCommand,
   promptRef,
+  centered = false,
 }) {
   const formRef = useRef(null);
   const agentSessionActive = useIsAgentSessionActive();
+  const [searchParams] = useSearchParams();
+  const { t } = useTranslation();
 
   /*
    * @checklist-item
-   * If the URL has the #agent hash, open the agent menu for the user
+   * If the URL has the agent param, open the agent menu for the user
    * automatically when the component mounts.
    */
   useEffect(() => {
-    if (window.location.hash === "#agent" && !showing) handleAgentClick();
+    if (searchParams.get("action") === "set-agent-chat" && !showing)
+      handleAgentClick();
   }, [promptRef.current]);
 
   useEffect(() => {
@@ -76,7 +73,7 @@ export function AvailableAgents({
 
   const handleAgentClick = () => {
     setShowing(false);
-    sendCommand("@agent ", false);
+    sendCommand({ text: "@agent " });
     promptRef?.current?.focus();
   };
 
@@ -84,10 +81,16 @@ export function AvailableAgents({
   return (
     <>
       <div hidden={!showing}>
-        <div className="w-full flex justify-center absolute bottom-[130px] md:bottom-[150px] left-0 z-10 px-4">
+        <div
+          className={
+            centered
+              ? "w-full flex justify-center md:justify-start absolute top-full mt-2 left-0 z-10 px-4 md:px-0 md:pl-[57px]"
+              : "flex justify-center md:justify-start absolute bottom-[130px] md:bottom-[150px] left-0 right-0 z-10 max-w-[750px] mx-auto px-4 md:px-0 md:pl-[57px]"
+          }
+        >
           <div
             ref={formRef}
-            className="w-[600px] p-2 bg-theme-action-menu-bg rounded-2xl shadow flex-col justify-center items-start gap-2.5 inline-flex"
+            className="w-[600px] p-2 bg-theme-action-menu-bg rounded-2xl shadow flex-col justify-center items-start gap-2.5 inline-flex overflow-y-auto max-h-[200px] no-scroll"
           >
             <button
               onClick={handleAgentClick}
@@ -95,27 +98,8 @@ export function AvailableAgents({
             >
               <div className="w-full flex-col text-left flex pointer-events-none">
                 <div className="text-theme-text-primary text-sm">
-                  <b>@agent</b> - the default agent for this workspace.
-                </div>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  <AbilityTag text="rag-search" />
-                  <AbilityTag text="web-scraping" />
-                  <AbilityTag text="web-browsing" />
-                  <AbilityTag text="save-file-to-browser" />
-                  <AbilityTag text="list-documents" />
-                  <AbilityTag text="summarize-document" />
-                  <AbilityTag text="chart-generation" />
-                </div>
-              </div>
-            </button>
-            <button
-              type="button"
-              disabled={true}
-              className="w-full rounded-xl flex flex-col justify-start group"
-            >
-              <div className="w-full flex-col text-center flex pointer-events-none">
-                <div className="text-theme-text-secondary text-xs italic">
-                  custom agents are coming soon!
+                  <b>{t("chat_window.at_agent")}</b>
+                  {t("chat_window.default_agent_description")}
                 </div>
               </div>
             </button>

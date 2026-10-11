@@ -1,26 +1,60 @@
+const { OpenAI: OpenAIApi } = require("openai");
 const {
-  BedrockRuntimeClient,
-  ConverseCommand,
-  ConverseStreamCommand,
-} = require("@aws-sdk/client-bedrock-runtime");
-const {
-  writeResponseChunk,
-  clientAbortedHandler,
+  handleDefaultStreamResponseV2,
 } = require("../../helpers/chat/responses");
 const { NativeEmbedder } = require("../../EmbeddingEngines/native");
 const {
   LLMPerformanceMonitor,
 } = require("../../helpers/chat/LLMPerformanceMonitor");
-const { v4: uuidv4 } = require("uuid");
+const {
+  buildAnthropicParams,
+  handleAnthropicChatStream,
+} = require("./anthropicChat");
+const {
+  buildResponsesParams,
+  handleResponsesChatStream,
+} = require("./openaiResponses");
+const {
+  openaiBaseURL,
+  anthropicBaseURL,
+  isOpenAIModelId,
+} = require("./endpoints");
+const {
+  temperatureParam,
+} = require("../../agents/aibitat/providers/helpers/tooled");
+
+/**
+ * Bedrock's OpenAI-compatible stream reports usage in a final chunk that
+ * arrives AFTER the `finish_reason` chunk, but the default stream handler
+ * stops reading at the first `finish_reason` and would never see it -
+ * leaving metrics to be estimated at one token per visible chunk, which
+ * wildly undercounts reasoning models. This holds back only the
+ * `finish_reason` chunk and merges the trailing usage chunk into it before
+ * yielding, so real usage reaches the handler. Normal token chunks pass
+ * through without delay.
+ * @param {AsyncIterable<object>} stream
+ */
+async function* mergeTrailingUsageChunk(stream) {
+  let held = null;
+  for await (const chunk of stream) {
+    if (held) {
+      const usageOnly =
+        (!chunk?.choices || chunk.choices.length === 0) && !!chunk?.usage;
+      if (usageOnly) held.usage = chunk.usage;
+      yield held;
+      held = null;
+      if (usageOnly) continue;
+    }
+    if (!!chunk?.choices?.[0]?.finish_reason && !chunk?.usage) {
+      held = chunk;
+      continue;
+    }
+    yield chunk;
+  }
+  if (held) yield held;
+}
 
 class AWSBedrockLLM {
-  /**
-   * These models do not support system prompts
-   * It is not explicitly stated but it is observed that they do not use the system prompt
-   * in their responses and will crash when a system prompt is provided.
-   * We can add more models to this list as we discover them or new models are added.
-   * We may want to extend this list or make a user-config if using custom bedrock models.
-   */
   noSystemPromptModels = [
     "amazon.titan-text-express-v1",
     "amazon.titan-text-lite-v1",
@@ -29,69 +63,84 @@ class AWSBedrockLLM {
     "us.deepseek.r1-v1:0",
   ];
 
+  /**
+   * Whether the model supports the temperature parameter at all. Anthropic
+   * models reject it (Opus 4.7 onward return a 400) and OpenAI GPT models use
+   * the Responses API, which never sends it.
+   * @param {string} modelName
+   * @returns {boolean}
+   */
+  static modelSupportsTemperature(modelName = "") {
+    if (modelName?.includes("anthropic")) return false;
+    if (isOpenAIModelId(modelName)) return false;
+    return true;
+  }
+
   constructor(embedder = null, modelPreference = null) {
-    if (!process.env.AWS_BEDROCK_LLM_ACCESS_KEY_ID)
-      throw new Error("No AWS Bedrock LLM profile id was set.");
-
-    if (!process.env.AWS_BEDROCK_LLM_ACCESS_KEY)
-      throw new Error("No AWS Bedrock LLM access key was set.");
-
+    if (!process.env.AWS_BEDROCK_LLM_API_KEY)
+      throw new Error("AWS_BEDROCK_LLM_API_KEY is required for AWS Bedrock.");
     if (!process.env.AWS_BEDROCK_LLM_REGION)
-      throw new Error("No AWS Bedrock LLM region was set.");
+      throw new Error("AWS_BEDROCK_LLM_REGION is required for AWS Bedrock.");
 
-    if (
-      process.env.AWS_BEDROCK_LLM_CONNECTION_METHOD === "sessionToken" &&
-      !process.env.AWS_BEDROCK_LLM_SESSION_TOKEN
-    )
-      throw new Error(
-        "No AWS Bedrock LLM session token was set while using session token as the authentication method."
-      );
-
+    this.className = "AWSBedrockLLM";
     this.model =
       modelPreference || process.env.AWS_BEDROCK_LLM_MODEL_PREFERENCE;
+    this.region = process.env.AWS_BEDROCK_LLM_REGION;
+
+    const contextWindowLimit = this.promptWindowLimit();
     this.limits = {
-      history: this.promptWindowLimit() * 0.15,
-      system: this.promptWindowLimit() * 0.15,
-      user: this.promptWindowLimit() * 0.7,
+      history: Math.floor(contextWindowLimit * 0.15),
+      system: Math.floor(contextWindowLimit * 0.15),
+      user: Math.floor(contextWindowLimit * 0.7),
     };
 
-    this.bedrockClient = new BedrockRuntimeClient({
-      region: process.env.AWS_BEDROCK_LLM_REGION,
-      credentials: {
-        accessKeyId: process.env.AWS_BEDROCK_LLM_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_BEDROCK_LLM_ACCESS_KEY,
-        ...(this.authMethod === "sessionToken"
-          ? { sessionToken: process.env.AWS_BEDROCK_LLM_SESSION_TOKEN }
-          : {}),
-      },
+    this.openai = new OpenAIApi({
+      apiKey: process.env.AWS_BEDROCK_LLM_API_KEY,
+      baseURL: openaiBaseURL(this.region, this.model),
     });
 
+    if (this.model?.includes("anthropic")) {
+      const AnthropicAI = require("@anthropic-ai/sdk");
+      this.anthropic = new AnthropicAI({
+        apiKey: process.env.AWS_BEDROCK_LLM_API_KEY,
+        baseURL: anthropicBaseURL(this.region, this.model),
+        defaultHeaders: { "anthropic-version": "2023-06-01" },
+      });
+    }
+
     this.embedder = embedder ?? new NativeEmbedder();
-    this.defaultTemp = 0.7;
     this.#log(
-      `Loaded with model: ${this.model}. Will communicate with AWS Bedrock using ${this.authMethod} authentication.`
+      `Initialized with model: ${this.model}. Region: ${this.region}. Context Window: ${contextWindowLimit}.`
     );
   }
 
+  get #isAnthropic() {
+    return !!this.anthropic;
+  }
+
   /**
-   * Get the authentication method for the AWS Bedrock LLM.
-   * There are only two valid values for this setting - anything else will default to "iam".
-   * @returns {"iam"|"sessionToken"}
+   * OpenAI GPT models on Bedrock are served via the Responses API, which is
+   * the only OpenAI API that supports their native tool calling.
    */
-  get authMethod() {
-    const method = process.env.AWS_BEDROCK_LLM_CONNECTION_METHOD || "iam";
-    if (!["iam", "sessionToken"].includes(method)) return "iam";
-    return method;
+  get #usesResponsesAPI() {
+    return isOpenAIModelId(this.model);
+  }
+
+  get #maxTokens() {
+    return Number(process.env.AWS_BEDROCK_LLM_MAX_TOKENS) || 4096;
+  }
+
+  temperatureParam(temperature = this.temperature) {
+    if (!AWSBedrockLLM.modelSupportsTemperature(this.model)) return {};
+    return temperatureParam(temperature);
   }
 
   #appendContext(contextTexts = []) {
-    if (!contextTexts || !contextTexts.length) return "";
+    if (!contextTexts?.length) return "";
     return (
       "\nContext:\n" +
       contextTexts
-        .map((text, i) => {
-          return `[CONTEXT ${i}]:\n${text}\n[END CONTEXT ${i}]\n\n`;
-        })
+        .map((text, i) => `[CONTEXT ${i}]:\n${text}\n[END CONTEXT ${i}]\n\n`)
         .join("")
     );
   }
@@ -100,323 +149,287 @@ class AWSBedrockLLM {
     console.log(`\x1b[32m[AWSBedrock]\x1b[0m ${text}`, ...args);
   }
 
+  static #slog(text, ...args) {
+    console.log(`\x1b[32m[AWSBedrock]\x1b[0m ${text}`, ...args);
+  }
+
   streamingEnabled() {
+    if (!!process.env.AWS_BEDROCK_STREAMING_DISABLED) return false;
     return "streamGetChatCompletion" in this;
   }
 
-  static promptWindowLimit(_modelName) {
-    const limit = process.env.AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT || 8191;
-    if (!limit || isNaN(Number(limit)))
-      throw new Error("No valid token context limit was set.");
-    return Number(limit);
+  static promptWindowLimit() {
+    const limit = process.env.AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT ?? 8191;
+    const numericLimit = Number(limit);
+    if (isNaN(numericLimit) || numericLimit <= 0) {
+      this.#slog(
+        `Invalid AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT: "${limit}". Returning default 8191.`
+      );
+      return 8191;
+    }
+    return numericLimit;
   }
 
-  // Ensure the user set a value for the token limit
-  // and if undefined - assume 4096 window.
   promptWindowLimit() {
-    const limit = process.env.AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT || 8191;
-    if (!limit || isNaN(Number(limit)))
-      throw new Error("No valid token context limit was set.");
-    return Number(limit);
+    return AWSBedrockLLM.promptWindowLimit();
   }
 
-  async isValidChatCompletionModel(_ = "") {
+  async isValidChatCompletionModel(_modelName = "") {
     return true;
   }
 
-  /**
-   * Generates appropriate content array for a message + attachments.
-   * TODO: Implement this - attachments are not supported yet for Bedrock.
-   * @param {{userPrompt:string, attachments: import("../../helpers").Attachment[]}}
-   * @returns {string|object[]}
-   */
-  #generateContent({ userPrompt, attachments = [] }) {
-    if (!attachments.length) return [{ text: userPrompt }];
-
-    // const content = [{ type: "text", text: userPrompt }];
-    // for (let attachment of attachments) {
-    //   content.push({
-    //     type: "image_url",
-    //     image_url: attachment.contentString,
-    //   });
-    // }
-    // return { content: content.flat() };
-  }
-
-  /**
-   * Construct the user prompt for this model.
-   * @param {{attachments: import("../../helpers").Attachment[]}} param0
-   * @returns
-   */
   constructPrompt({
     systemPrompt = "",
     contextTexts = [],
     chatHistory = [],
     userPrompt = "",
-    _attachments = [],
+    attachments = [],
   }) {
-    let prompt = [
-      {
-        role: "system",
-        content: [
-          { text: `${systemPrompt}${this.#appendContext(contextTexts)}` },
-        ],
-      },
-    ];
+    const systemMessageContent = `${systemPrompt}${this.#appendContext(contextTexts)}`;
+    let messages = [];
 
-    // If the model does not support system prompts, we need to add a user message and assistant message
     if (this.noSystemPromptModels.includes(this.model)) {
-      prompt = [
-        {
-          role: "user",
-          content: [
-            { text: `${systemPrompt}${this.#appendContext(contextTexts)}` },
-          ],
-        },
-        {
-          role: "assistant",
-          content: [{ text: "Okay." }],
-        },
-      ];
+      if (systemMessageContent.trim().length > 0) {
+        this.#log(
+          `Model ${this.model} doesn't support system prompts; simulating.`
+        );
+        messages.push(
+          { role: "user", content: systemMessageContent },
+          { role: "assistant", content: "Okay." }
+        );
+      }
+    } else if (systemMessageContent.trim().length > 0) {
+      messages.push({ role: "system", content: systemMessageContent });
     }
 
-    return [
-      ...prompt,
-      ...chatHistory.map((msg) => ({
-        role: msg.role,
-        content: this.#generateContent({
-          userPrompt: msg.content,
-          attachments: msg.attachments,
-        }),
-      })),
-      {
-        role: "user",
-        content: this.#generateContent({
-          userPrompt: userPrompt,
-          attachments: [],
-        }),
-      },
-    ];
+    messages = messages.concat(
+      chatHistory.map((msg) => {
+        const content = this.#formatMessageContent(
+          msg.content,
+          msg.attachments
+        );
+        return { role: msg.role, content };
+      })
+    );
+
+    const userContent = this.#formatMessageContent(userPrompt, attachments);
+    messages.push({ role: "user", content: userContent });
+
+    return messages;
   }
 
-  /**
-   * Parses and prepends reasoning from the response and returns the full text response.
-   * @param {Object} response
-   * @returns {string}
-   */
-  #parseReasoningFromResponse({ content = [] }) {
-    let textResponse = content[0]?.text;
+  #formatMessageContent(text, attachments = []) {
+    if (!Array.isArray(attachments) || attachments.length === 0) return text;
 
-    if (
-      !!content?.[1]?.reasoningContent &&
-      content?.[1]?.reasoningContent?.reasoningText?.text?.trim().length > 0
-    )
-      textResponse = `<think>${content?.[1]?.reasoningContent?.reasoningText?.text}</think>${textResponse}`;
-
-    return textResponse;
+    const content = [{ type: "text", text }];
+    for (const attachment of attachments) {
+      if (!attachment?.contentString || !attachment?.mime) continue;
+      content.push({
+        type: "image_url",
+        image_url: { url: attachment.contentString },
+      });
+    }
+    return content;
   }
 
-  async getChatCompletion(messages = null, { temperature = 0.7 }) {
-    const hasSystem = messages[0]?.role === "system";
-    const [system, ...history] = hasSystem ? messages : [null, ...messages];
+  // --- Chat completions ---
+
+  async getChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
+    if (!messages?.length)
+      throw new Error(
+        "AWSBedrock::getChatCompletion requires a non-empty messages array."
+      );
+
+    if (this.#isAnthropic) {
+      return this.#anthropicChatCompletion(messages, temperature);
+    }
+
+    if (this.#usesResponsesAPI) {
+      return this.#responsesChatCompletion(messages);
+    }
 
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
-      this.bedrockClient
-        .send(
-          new ConverseCommand({
-            modelId: this.model,
-            messages: history,
-            inferenceConfig: {
-              maxTokens: this.promptWindowLimit(),
-              temperature,
-            },
-            system: !!system ? system.content : undefined,
-          })
-        )
+      this.openai.chat.completions
+        .create({
+          model: this.model,
+          messages,
+          ...this.temperatureParam(temperature),
+        })
         .catch((e) => {
-          throw new Error(
-            `AWSBedrock::getChatCompletion failed to communicate with Bedrock client. ${e.message}`
-          );
-        }),
-      messages,
-      false
+          this.#log(`Bedrock API Error (getChatCompletion): ${e.message}`, e);
+          throw new Error(`AWSBedrock::getChatCompletion failed. ${e.message}`);
+        })
     );
 
     const response = result.output;
-    if (!response || !response?.output) return null;
+    if (!response?.choices?.[0]?.message) {
+      this.#log("Bedrock response missing expected structure.", response);
+      return null;
+    }
+
     return {
-      textResponse: this.#parseReasoningFromResponse(response.output?.message),
-      metrics: {
-        prompt_tokens: response?.usage?.inputTokens,
-        completion_tokens: response?.usage?.outputTokens,
-        total_tokens: response?.usage?.totalTokens,
-        outputTps:
-          response?.usage?.outputTokens / (response?.metrics?.latencyMs / 1000),
-        duration: result.duration,
-      },
+      textResponse: response.choices[0].message.content,
+      metrics: this.#buildMetrics(response.usage, result.duration),
     };
   }
 
-  async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
-    const hasSystem = messages[0]?.role === "system";
-    const [system, ...history] = hasSystem ? messages : [null, ...messages];
+  async streamGetChatCompletion(
+    messages = null,
+    { temperature = this.temperature } = {}
+  ) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      throw new Error(
+        "AWSBedrock::streamGetChatCompletion requires a non-empty messages array."
+      );
+    }
 
-    const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
-      this.bedrockClient.send(
-        new ConverseStreamCommand({
-          modelId: this.model,
-          messages: history,
-          inferenceConfig: { maxTokens: this.promptWindowLimit(), temperature },
-          system: !!system ? system.content : undefined,
-        })
-      ),
+    if (this.#isAnthropic) {
+      const params = buildAnthropicParams({
+        model: this.model,
+        maxTokens: this.#maxTokens,
+        messages,
+        ...this.temperatureParam(temperature),
+      });
+      const stream = this.anthropic.messages.stream(params);
+      return await LLMPerformanceMonitor.measureStream({
+        func: stream,
+        messages,
+        runPromptTokenCalculation: false,
+        modelTag: this.model,
+        provider: this.className,
+      });
+    }
+
+    if (this.#usesResponsesAPI) {
+      const stream = await this.openai.responses.create({
+        ...buildResponsesParams({ model: this.model, messages }),
+        stream: true,
+      });
+      return await LLMPerformanceMonitor.measureStream({
+        func: stream,
+        messages,
+        runPromptTokenCalculation: false,
+        modelTag: this.model,
+        provider: this.className,
+      });
+    }
+
+    const stream = await this.openai.chat.completions.create({
+      model: this.model,
       messages,
-      false
-    );
-    return measuredStreamRequest;
-  }
-
-  /**
-   * Handles the stream response from the AWS Bedrock API.
-   * Bedrock does not support usage metrics in the stream response so we need to estimate them.
-   * @param {Object} response - the response object
-   * @param {import('../../helpers/chat/LLMPerformanceMonitor').MonitoredStream} stream - the stream response from the AWS Bedrock API w/tracking
-   * @param {Object} responseProps - the response properties
-   * @returns {Promise<string>}
-   */
-  handleStream(response, stream, responseProps) {
-    const { uuid = uuidv4(), sources = [] } = responseProps;
-    let hasUsageMetrics = false;
-    let usage = {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-    };
-
-    return new Promise(async (resolve) => {
-      let fullText = "";
-      let reasoningText = "";
-
-      // Establish listener to early-abort a streaming response
-      // in case things go sideways or the user does not like the response.
-      // We preserve the generated text but continue as if chat was completed
-      // to preserve previously generated content.
-      const handleAbort = () => {
-        stream?.endMeasurement(usage);
-        clientAbortedHandler(resolve, fullText);
-      };
-      response.on("close", handleAbort);
-
-      try {
-        for await (const chunk of stream.stream) {
-          if (chunk === undefined)
-            throw new Error(
-              "Stream returned undefined chunk. Aborting reply - check model provider logs."
-            );
-
-          const action = Object.keys(chunk)[0];
-          if (action === "metadata") {
-            hasUsageMetrics = true;
-            usage.prompt_tokens = chunk.metadata?.usage?.inputTokens ?? 0;
-            usage.completion_tokens = chunk.metadata?.usage?.outputTokens ?? 0;
-            usage.total_tokens = chunk.metadata?.usage?.totalTokens ?? 0;
-          }
-
-          if (action === "contentBlockDelta") {
-            const token = chunk.contentBlockDelta?.delta?.text;
-            const reasoningToken =
-              chunk.contentBlockDelta?.delta?.reasoningContent?.text;
-
-            // Reasoning models will always return the reasoning text before the token text.
-            if (reasoningToken) {
-              // If the reasoning text is empty (''), we need to initialize it
-              // and send the first chunk of reasoning text.
-              if (reasoningText.length === 0) {
-                writeResponseChunk(response, {
-                  uuid,
-                  sources: [],
-                  type: "textResponseChunk",
-                  textResponse: `<think>${reasoningToken}`,
-                  close: false,
-                  error: false,
-                });
-                reasoningText += `<think>${reasoningToken}`;
-                continue;
-              } else {
-                writeResponseChunk(response, {
-                  uuid,
-                  sources: [],
-                  type: "textResponseChunk",
-                  textResponse: reasoningToken,
-                  close: false,
-                  error: false,
-                });
-                reasoningText += reasoningToken;
-              }
-            }
-
-            // If the reasoning text is not empty, but the reasoning token is empty
-            // and the token text is not empty we need to close the reasoning text and begin sending the token text.
-            if (!!reasoningText && !reasoningToken && token) {
-              writeResponseChunk(response, {
-                uuid,
-                sources: [],
-                type: "textResponseChunk",
-                textResponse: `</think>`,
-                close: false,
-                error: false,
-              });
-              fullText += `${reasoningText}</think>`;
-              reasoningText = "";
-            }
-
-            if (token) {
-              fullText += token;
-              // If we never saw a usage metric, we can estimate them by number of completion chunks
-              if (!hasUsageMetrics) usage.completion_tokens++;
-              writeResponseChunk(response, {
-                uuid,
-                sources: [],
-                type: "textResponseChunk",
-                textResponse: token,
-                close: false,
-                error: false,
-              });
-            }
-          }
-        }
-
-        writeResponseChunk(response, {
-          uuid,
-          sources,
-          type: "textResponseChunk",
-          textResponse: "",
-          close: true,
-          error: false,
-        });
-        response.removeListener("close", handleAbort);
-        stream?.endMeasurement(usage);
-        resolve(fullText);
-      } catch (error) {
-        console.log(`\x1b[43m\x1b[34m[STREAMING ERROR]\x1b[0m ${e.message}`);
-        writeResponseChunk(response, {
-          uuid,
-          type: "abort",
-          textResponse: null,
-          sources: [],
-          close: true,
-          error: `AWSBedrock:streaming - could not stream chat. ${error?.cause ?? error.message}`,
-        });
-        response.removeListener("close", handleAbort);
-        stream?.endMeasurement(usage);
-        resolve(fullText); // Return what we currently have - if anything.
-      }
+      ...this.temperatureParam(temperature),
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+    return await LLMPerformanceMonitor.measureStream({
+      func: mergeTrailingUsageChunk(stream),
+      messages,
+      modelTag: this.model,
+      provider: this.className,
+      runPromptTokenCalculation: true,
     });
   }
 
-  // Simple wrapper for dynamic embedder & normalize interface for all LLM implementations
+  handleStream(response, stream, responseProps) {
+    if (this.#isAnthropic)
+      return handleAnthropicChatStream(response, stream, responseProps);
+    if (this.#usesResponsesAPI)
+      return handleResponsesChatStream(response, stream, responseProps);
+    return handleDefaultStreamResponseV2(response, stream, responseProps);
+  }
+
+  // --- Anthropic non-streaming completion ---
+
+  async #anthropicChatCompletion(messages, temperature) {
+    const params = buildAnthropicParams({
+      model: this.model,
+      maxTokens: this.#maxTokens,
+      messages,
+      ...this.temperatureParam(temperature),
+    });
+    const result = await LLMPerformanceMonitor.measureAsyncFunction(
+      this.anthropic.messages
+        .stream(params)
+        .finalMessage()
+        .catch((e) => {
+          this.#log(`Bedrock API Error (getChatCompletion): ${e.message}`, e);
+          throw new Error(`AWSBedrock::getChatCompletion failed. ${e.message}`);
+        })
+    );
+
+    const response = result.output;
+    const promptTokens = response.usage?.input_tokens ?? 0;
+    const completionTokens = response.usage?.output_tokens ?? 0;
+
+    return {
+      textResponse: response.content[0]?.text ?? null,
+      metrics: this.#buildMetrics(
+        {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+        },
+        result.duration,
+        completionTokens
+      ),
+    };
+  }
+
+  // --- OpenAI Responses API non-streaming completion ---
+
+  async #responsesChatCompletion(messages) {
+    const result = await LLMPerformanceMonitor.measureAsyncFunction(
+      this.openai.responses
+        .create(buildResponsesParams({ model: this.model, messages }))
+        .catch((e) => {
+          this.#log(`Bedrock API Error (getChatCompletion): ${e.message}`, e);
+          throw new Error(`AWSBedrock::getChatCompletion failed. ${e.message}`);
+        })
+    );
+
+    const response = result.output;
+    const promptTokens = response.usage?.input_tokens ?? 0;
+    const completionTokens = response.usage?.output_tokens ?? 0;
+
+    return {
+      textResponse: response.output_text ?? null,
+      metrics: this.#buildMetrics(
+        {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens:
+            response.usage?.total_tokens ?? promptTokens + completionTokens,
+        },
+        result.duration
+      ),
+    };
+  }
+
+  #buildMetrics(usage = {}, duration = 0, completionTokensOverride = null) {
+    const completionTokens =
+      completionTokensOverride ?? usage?.completion_tokens ?? 0;
+    return {
+      prompt_tokens: usage?.prompt_tokens ?? 0,
+      completion_tokens: completionTokens,
+      total_tokens: usage?.total_tokens ?? 0,
+      outputTps:
+        completionTokens && duration ? completionTokens / (duration / 1000) : 0,
+      duration,
+      model: this.model,
+      provider: this.className,
+      timestamp: new Date(),
+    };
+  }
+
+  // --- Embeddings ---
+
   async embedTextInput(textInput) {
     return await this.embedder.embedTextInput(textInput);
   }
+
   async embedChunks(textChunks = []) {
     return await this.embedder.embedChunks(textChunks);
   }

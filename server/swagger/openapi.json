@@ -478,6 +478,9 @@
               }
             }
           },
+          "400": {
+            "description": "Bad Request"
+          },
           "401": {
             "description": "Instance is not in Multi-User mode. Method denied"
           },
@@ -495,6 +498,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not Found"
           },
           "500": {
             "description": "Internal Server Error"
@@ -843,7 +849,7 @@
         "tags": [
           "Documents"
         ],
-        "description": "Upload a new file to AnythingLLM to be parsed and prepared for embedding.",
+        "description": "Upload a new file to AnythingLLM to be parsed and prepared for embedding, with optional metadata.",
         "parameters": [],
         "responses": {
           "200": {
@@ -890,6 +896,9 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable Entity"
+          },
           "500": {
             "description": "Internal Server Error"
           }
@@ -909,6 +918,20 @@
                     "type": "string",
                     "format": "binary",
                     "description": "The file to upload"
+                  },
+                  "addToWorkspaces": {
+                    "type": "string",
+                    "description": "comma-separated text-string of workspace slugs to embed the document into post-upload. eg: workspace1,workspace2"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "description": "Key:Value pairs of metadata to attach to the document in JSON Object format. Only specific keys are allowed - see example.",
+                    "example": {
+                      "title": "Custom Title",
+                      "docAuthor": "Author Name",
+                      "description": "A brief description",
+                      "docSource": "Source of the document"
+                    }
                   }
                 }
               }
@@ -980,6 +1003,9 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable Entity"
+          },
           "500": {
             "description": "Internal Server Error",
             "content": {
@@ -996,7 +1022,7 @@
           }
         },
         "requestBody": {
-          "description": "File to be uploaded.",
+          "description": "File to be uploaded, with optional metadata.",
           "required": true,
           "content": {
             "multipart/form-data": {
@@ -1010,6 +1036,20 @@
                     "type": "string",
                     "format": "binary",
                     "description": "The file to upload"
+                  },
+                  "addToWorkspaces": {
+                    "type": "string",
+                    "description": "comma-separated text-string of workspace slugs to embed the document into post-upload. eg: workspace1,workspace2"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "description": "Key:Value pairs of metadata to attach to the document in JSON Object format. Only specific keys are allowed - see example.",
+                    "example": {
+                      "title": "Custom Title",
+                      "docAuthor": "Author Name",
+                      "description": "A brief description",
+                      "docSource": "Source of the document"
+                    }
                   }
                 }
               }
@@ -1023,7 +1063,7 @@
         "tags": [
           "Documents"
         ],
-        "description": "Upload a valid URL for AnythingLLM to scrape and prepare for embedding.",
+        "description": "Upload a valid URL for AnythingLLM to scrape and prepare for embedding. The link property can be a single URL string or an array of URL strings. Optionally, specify a comma-separated list of workspace slugs to embed the document into post-upload.",
         "parameters": [],
         "responses": {
           "200": {
@@ -1071,19 +1111,33 @@
               }
             }
           },
+          "422": {
+            "description": "Unprocessable Entity"
+          },
           "500": {
             "description": "Internal Server Error"
           }
         },
         "requestBody": {
-          "description": "Link of web address to be scraped.",
+          "description": "Link of web address to be scraped and optionally a comma-separated list of workspace slugs to embed the document into post-upload, and optional metadata. The link property also accepts an array of links to process in a single request.",
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
                 "example": {
-                  "link": "https://anythingllm.com"
+                  "link": "https://anythingllm.com",
+                  "addToWorkspaces": "workspace1,workspace2",
+                  "scraperHeaders": {
+                    "Authorization": "Bearer token123",
+                    "My-Custom-Header": "value"
+                  },
+                  "metadata": {
+                    "title": "Custom Title",
+                    "docAuthor": "Author Name",
+                    "description": "A brief description",
+                    "docSource": "Source of the document"
+                  }
                 }
               }
             }
@@ -1160,6 +1214,7 @@
                 "type": "object",
                 "example": {
                   "textContent": "This is the raw text that will be saved as a document in AnythingLLM.",
+                  "addToWorkspaces": "workspace1,workspace2",
                   "metadata": {
                     "title": "This key is required. See in /server/endpoints/api/document/index.js:287",
                     "keyOne": "valueOne",
@@ -1178,7 +1233,7 @@
         "tags": [
           "Documents"
         ],
-        "description": "List of all locally-stored documents in instance",
+        "description": "List of all locally-stored documents in instance. Optionally, pass ?folder=name to fetch the contents of a single folder, paginated with offset and limit (limit=all returns every document in that folder).",
         "parameters": [],
         "responses": {
           "200": {
@@ -1233,7 +1288,7 @@
         "tags": [
           "Documents"
         ],
-        "description": "Get all documents stored in a specific folder.",
+        "description": "Get all documents stored in a specific folder. Returns every document by default; pass offset and limit to paginate.",
         "parameters": [
           {
             "name": "folderName",
@@ -1243,11 +1298,28 @@
               "type": "string"
             },
             "description": "Name of the folder to retrieve documents from"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Number of documents to skip. Defaults to 0.",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max documents to return, capped at 1000. Defaults to all, which returns every document in the folder.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
             "content": {
               "application/json": {
                 "schema": {
@@ -1275,7 +1347,8 @@
                   }
                 }
               }
-            }
+            },
+            "description": "OK"
           },
           "403": {
             "description": "Forbidden",
@@ -1650,6 +1723,82 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/document/generated-files/{filename}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "description": "Download a file generated by an agent skill (e.g., PDF, DOCX, XLSX, PPTX) or a generated image (img-*.png). The filename is returned in the `outputs` array of a chat response when an agent generates a file or image. Use the `storageFilename` value from that response to download the file.",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The storage filename returned in the chat response outputs array (e.g., pdf-e9e14f28-d6b6-4f49-91a0-dd331517f567.pdf)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File downloaded successfully",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "example": {
+                    "error": "Invalid filename format"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidAPIKey"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidAPIKey"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "example": {
+                    "error": "File not found"
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
           }
         }
       }
@@ -2266,19 +2415,24 @@
           }
         },
         "requestBody": {
-          "description": "Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.",
+          "description": "Send a prompt to the workspace and the type of conversation (automatic, query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Automatic:</b> Will use tool-calling if the provider supports native tool calling without needing to invoke @agent.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.<br/><b>Attachments:</b> Can include images and documents.<br/><b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Document attachments:</b> must have the mime type <code>application/anythingllm-document</code> - otherwise it will be passed to the LLM as an image and may fail to process. This uses the built-in document processor to first parse the document to text before injecting it into the context window.",
           "required": true,
           "content": {
             "application/json": {
               "example": {
                 "message": "What is AnythingLLM?",
-                "mode": "query | chat",
+                "mode": "automatic | query | chat",
                 "sessionId": "identifier-to-partition-chats-by-external-id",
                 "attachments": [
                   {
                     "name": "image.png",
                     "mime": "image/png",
                     "contentString": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+                  },
+                  {
+                    "name": "this is a document.pdf",
+                    "mime": "application/anythingllm-document",
+                    "contentString": "data:application/pdf;base64,iVBORw0KGgoAAAANSUhEUgAA..."
                   }
                 ],
                 "reset": false
@@ -2369,19 +2523,24 @@
           }
         },
         "requestBody": {
-          "description": "Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.",
+          "description": "Send a prompt to the workspace and the type of conversation (automatic, query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Automatic:</b> Will use tool-calling if the provider supports native tool calling without needing to invoke @agent.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.<br/><b>Attachments:</b> Can include images and documents.<br/><b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Document attachments:</b> must have the mime type <code>application/anythingllm-document</code> - otherwise it will be passed to the LLM as an image and may fail to process. This uses the built-in document processor to first parse the document to text before injecting it into the context window.",
           "required": true,
           "content": {
             "application/json": {
               "example": {
                 "message": "What is AnythingLLM?",
-                "mode": "query | chat",
+                "mode": "automatic | query | chat",
                 "sessionId": "identifier-to-partition-chats-by-external-id",
                 "attachments": [
                   {
                     "name": "image.png",
                     "mime": "image/png",
                     "contentString": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+                  },
+                  {
+                    "name": "this is a document.pdf",
+                    "mime": "application/anythingllm-document",
+                    "contentString": "data:application/pdf;base64,iVBORw0KGgoAAAANSUhEUgAA..."
                   }
                 ],
                 "reset": false
@@ -2682,6 +2841,9 @@
               }
             }
           },
+          "400": {
+            "description": "Bad Request"
+          },
           "403": {
             "description": "Forbidden",
             "content": {
@@ -2890,9 +3052,6 @@
               }
             }
           },
-          "400": {
-            "description": "Bad Request"
-          },
           "403": {
             "description": "Forbidden",
             "content": {
@@ -2907,6 +3066,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not Found"
           },
           "500": {
             "description": "Internal Server Error"
@@ -3034,9 +3196,6 @@
               }
             }
           },
-          "400": {
-            "description": "Bad Request"
-          },
           "403": {
             "description": "Forbidden",
             "content": {
@@ -3051,6 +3210,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not Found"
           },
           "500": {
             "description": "Internal Server Error"
@@ -3125,6 +3287,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not Found"
           },
           "500": {
             "description": "Internal Server Error"
@@ -3241,6 +3406,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Not Found"
           }
         },
         "requestBody": {
@@ -3257,6 +3425,11 @@
                     "name": "image.png",
                     "mime": "image/png",
                     "contentString": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+                  },
+                  {
+                    "name": "this is a document.pdf",
+                    "mime": "application/anythingllm-document",
+                    "contentString": "data:application/pdf;base64,iVBORw0KGgoAAAANSUhEUgAA..."
                   }
                 ],
                 "reset": false
@@ -3396,22 +3569,19 @@
                 "schema": {
                   "type": "object",
                   "example": {
-                    "models": [
+                    "object": "list",
+                    "data": [
                       {
-                        "name": "Sample workspace",
-                        "model": "sample-workspace",
-                        "llm": {
-                          "provider": "ollama",
-                          "model": "llama3:8b"
-                        }
+                        "id": "model-id-0",
+                        "object": "model",
+                        "created": 1686935002,
+                        "owned_by": "organization-owner"
                       },
                       {
-                        "name": "Second workspace",
-                        "model": "workspace-2",
-                        "llm": {
-                          "provider": "openai",
-                          "model": "gpt-3.5-turbo"
-                        }
+                        "id": "model-id-1",
+                        "object": "model",
+                        "created": 1686935002,
+                        "owned_by": "organization-owner"
                       }
                     ]
                   }
@@ -3505,6 +3675,83 @@
                 "temperature": 0.7
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/openai/images/generations": {
+      "post": {
+        "tags": [
+          "OpenAI Compatible Endpoints"
+        ],
+        "description": "Generate or edit an image using the system-configured image generation provider. Send a multipart/form-data request with a \"prompt\" field and an optional \"size\" field. To edit an existing image, attach one or more files as \"image_references\" — when present, the request is automatically routed to the provider image editing endpoint. Returns the image as a base64 PNG. If the provider does not support reference images (e.g. Ollama), the request fails with a descriptive error.",
+        "parameters": [
+          {
+            "name": "prompt",
+            "in": "formData",
+            "description": "Text prompt describing the image to generate or the edit to apply.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "size",
+            "in": "formData",
+            "description": "Image dimensions (e.g. 1024x1024). Defaults to the system IMAGE_GEN_SIZE_PREF setting.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "image_references",
+            "in": "formData",
+            "description": "Optional reference image file(s) for editing. When provided, the request is routed to the edit endpoint instead of generation.",
+            "required": false,
+            "schema": {
+              "type": "file"
+            }
+          },
+          {
+            "name": "response_format",
+            "in": "formData",
+            "description": "Response format: b64_json (default) returns base64-encoded image data in JSON, blob returns the raw image bytes with content-type image/png.",
+            "required": false,
+            "default": "b64_json",
+            "enum": [
+              "b64_json",
+              "blob"
+            ],
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidAPIKey"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidAPIKey"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error"
           }
         }
       }

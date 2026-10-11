@@ -2,21 +2,21 @@ const { v4: uuidv4 } = require("uuid");
 const { Document } = require("../../../models/documents");
 const { Telemetry } = require("../../../models/telemetry");
 const { Workspace } = require("../../../models/workspace");
-const {
-  getLLMProvider,
-  getEmbeddingEngineSelection,
-} = require("../../../utils/helpers");
+const { getEmbeddingEngineSelection } = require("../../../utils/helpers");
 const { reqBody } = require("../../../utils/http");
 const { validApiKey } = require("../../../utils/middleware/validApiKey");
 const { EventLogs } = require("../../../models/eventLogs");
 const {
   OpenAICompatibleChat,
 } = require("../../../utils/chats/openaiCompatible");
+const { getModelTag } = require("../../utils");
+const { extractTextContent, extractAttachments } = require("./helpers");
+const { handleImageGenUpload } = require("../../../utils/files/multer");
 
 function apiOpenAICompatibleEndpoints(app) {
   if (!app) return;
 
-  app.get("/v1/openai/models", [validApiKey], async (request, response) => {
+  app.get("/v1/openai/models", [validApiKey], async (_, response) => {
     /*
     #swagger.tags = ['OpenAI Compatible Endpoints']
     #swagger.description = 'Get all available "models" which are workspaces you can use for chatting.'
@@ -26,22 +26,19 @@ function apiOpenAICompatibleEndpoints(app) {
           "schema": {
             "type": "object",
             "example": {
-              "models": [
+              "object": "list",
+              "data": [
                 {
-                  "name": "Sample workspace",
-                  "model": "sample-workspace",
-                  "llm": {
-                    "provider": "ollama",
-                    "model": "llama3:8b"
-                  }
+                  "id": "model-id-0",
+                  "object": "model",
+                  "created": 1686935002,
+                  "owned_by": "organization-owner"
                 },
                 {
-                  "name": "Second workspace",
-                  "model": "workspace-2",
-                  "llm": {
-                    "provider": "openai",
-                    "model": "gpt-3.5-turbo"
-                  }
+                  "id": "model-id-1",
+                  "object": "model",
+                  "created": 1686935002,
+                  "owned_by": "organization-owner"
                 }
               ]
             }
@@ -59,21 +56,17 @@ function apiOpenAICompatibleEndpoints(app) {
       const data = [];
       const workspaces = await Workspace.where();
       for (const workspace of workspaces) {
-        const provider = workspace?.chatProvider ?? process.env.LLM_PROVIDER;
-        let LLMProvider = getLLMProvider({
-          provider,
-          model: workspace?.chatModel,
-        });
         data.push({
-          name: workspace.name,
-          model: workspace.slug,
-          llm: {
-            provider: provider,
-            model: LLMProvider.model,
-          },
+          id: workspace.slug,
+          object: "model",
+          created: Math.floor(Number(new Date(workspace.createdAt)) / 1000),
+          owned_by: workspace?.chatProvider || process.env.LLM_PROVIDER,
         });
       }
-      return response.status(200).json({ data });
+      return response.status(200).json({
+        object: "list",
+        data,
+      });
     } catch (e) {
       console.error(e.message, e);
       response.sendStatus(500).end();
@@ -123,7 +116,7 @@ function apiOpenAICompatibleEndpoints(app) {
         if (!workspace) return response.status(401).end();
 
         const userMessage = messages.pop();
-        if (userMessage.role !== "user") {
+        if (userMessage?.role !== "user") {
           return response.status(400).json({
             id: uuidv4(),
             type: "abort",
@@ -136,7 +129,9 @@ function apiOpenAICompatibleEndpoints(app) {
         }
 
         const systemPrompt =
-          messages.find((chat) => chat.role === "system")?.content ?? null;
+          extractTextContent(
+            messages.find((chat) => chat.role === "system")?.content
+          ) ?? null;
         const history = messages.filter((chat) => chat.role !== "system") ?? [];
 
         if (!stream) {
@@ -144,8 +139,9 @@ function apiOpenAICompatibleEndpoints(app) {
             workspace,
             systemPrompt,
             history,
-            prompt: userMessage.content,
-            temperature: Number(temperature),
+            prompt: extractTextContent(userMessage.content),
+            attachments: extractAttachments(userMessage.content),
+            temperature,
           });
 
           await Telemetry.sendTelemetry("sent_chat", {
@@ -172,8 +168,9 @@ function apiOpenAICompatibleEndpoints(app) {
           workspace,
           systemPrompt,
           history,
-          prompt: userMessage.content,
-          temperature: Number(temperature),
+          prompt: extractTextContent(userMessage.content),
+          attachments: extractAttachments(userMessage.content),
+          temperature,
           response,
         });
         await Telemetry.sendTelemetry("sent_chat", {
@@ -181,6 +178,7 @@ function apiOpenAICompatibleEndpoints(app) {
           Embedder: process.env.EMBEDDING_ENGINE || "inherit",
           VectorDbSelection: process.env.VECTOR_DB || "lancedb",
           TTSSelection: process.env.TTS_PROVIDER || "native",
+          LLMModel: getModelTag(),
         });
         await EventLogs.logEvent("api_sent_chat", {
           workspaceName: workspace?.name,
@@ -190,6 +188,101 @@ function apiOpenAICompatibleEndpoints(app) {
       } catch (e) {
         console.error(e.message, e);
         response.status(500).end();
+      }
+    }
+  );
+
+  app.post(
+    "/v1/openai/images/generations",
+    [validApiKey, handleImageGenUpload],
+    async (request, response) => {
+      /*
+      #swagger.tags = ['OpenAI Compatible Endpoints']
+      #swagger.description = 'Generate or edit an image using the system-configured image generation provider. Send a multipart/form-data request with a "prompt" field and an optional "size" field. To edit an existing image, attach one or more files as "image_references" — when present, the request is automatically routed to the provider image editing endpoint. Returns the image as a base64 PNG. If the provider does not support reference images (e.g. Ollama), the request fails with a descriptive error.'
+      #swagger.consumes = ['multipart/form-data']
+      #swagger.parameters['prompt'] = {
+        in: 'formData',
+        description: 'Text prompt describing the image to generate or the edit to apply.',
+        required: true,
+        type: 'string'
+      }
+      #swagger.parameters['size'] = {
+        in: 'formData',
+        description: "Image dimensions (e.g. 1024x1024). Defaults to the system IMAGE_GEN_SIZE_PREF setting.",
+        required: false,
+        type: 'string'
+      }
+      #swagger.parameters['image_references'] = {
+        in: 'formData',
+        description: 'Optional reference image file(s) for editing. When provided, the request is routed to the edit endpoint instead of generation.',
+        required: false,
+        type: 'file'
+      }
+      #swagger.parameters['response_format'] = {
+        in: 'formData',
+        description: "Response format: b64_json (default) returns base64-encoded image data in JSON, blob returns the raw image bytes with content-type image/png.",
+        required: false,
+        type: 'string',
+        default: 'b64_json',
+        enum: ['b64_json', 'blob']
+      }
+      #swagger.responses[403] = {
+        schema: {
+          "$ref": "#/definitions/InvalidAPIKey"
+        }
+      }
+      */
+      try {
+        const prompt = request.body?.prompt;
+        const size = request.body?.size;
+        const responseFormat = request.body?.response_format || "b64_json";
+        if (!prompt || !String(prompt).trim().length)
+          return response.status(400).json({ error: "A prompt is required." });
+
+        const abortController = new AbortController();
+        response.on("close", () => abortController.abort());
+        const signal = abortController.signal;
+
+        const imageBuffers = (request.files || []).map((f) => f.buffer);
+        const {
+          generateImageForWorkspace,
+          editImageForWorkspace,
+        } = require("../../../utils/ImageGenerators");
+
+        const result =
+          imageBuffers.length > 0
+            ? await editImageForWorkspace({
+                prompt: String(prompt),
+                images: imageBuffers,
+                size: size ? String(size) : undefined,
+                signal,
+              })
+            : await generateImageForWorkspace({
+                prompt: String(prompt),
+                size: size ? String(size) : undefined,
+                signal,
+              });
+
+        if (responseFormat === "blob") {
+          if (result.notice)
+            response.setHeader("X-Image-Notice", result.notice);
+          response.setHeader("Content-Type", "image/png");
+          response.setHeader(
+            "Content-Disposition",
+            `inline; filename="${result.storageFilename}"`
+          );
+          return response.status(200).end(result.buffer);
+        }
+
+        return response.status(200).json({
+          data: [{ b64_json: result.buffer.toString("base64") }],
+          ...(result.notice && { notice: result.notice }),
+        });
+      } catch (e) {
+        const { isAbortError } = require("../../../utils/helpers/abortSignals");
+        if (isAbortError(e)) return response.end();
+        console.error(e.message, e);
+        return response.status(500).json({ error: e.message });
       }
     }
   );

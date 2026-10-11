@@ -2,29 +2,44 @@ const OpenAI = require("openai");
 const Provider = require("./ai-provider.js");
 const InheritMultiple = require("./helpers/classes.js");
 const UnTooled = require("./helpers/untooled.js");
+const {
+  tooledStream,
+  tooledComplete,
+  temperatureParam,
+  maxTokensParam,
+} = require("./helpers/tooled.js");
+const { RetryError } = require("../error.js");
 const { toValidNumber } = require("../../../http/index.js");
+const { getAnythingLLMUserAgent } = require("../../../../endpoints/utils");
+const { GenericOpenAiLLM } = require("../../../AiProviders/genericOpenAi");
+const { attachmentToContentBlock } = require("../../../helpers/attachments");
 
 /**
  * The agent provider for the Generic OpenAI provider.
- * Since we cannot promise the generic provider even supports tool calling
- * which is nearly 100% likely it does not, we can just wrap it in untooled
- * which often is far better anyway.
+ * Uses native OpenAI-compatible tool calling by default and falls back to
+ * the UnTooled prompt-based approach when native tool calling is disabled
+ * via PROVIDER_DISABLE_NATIVE_TOOL_CALLING.
  */
 class GenericOpenAiProvider extends InheritMultiple([Provider, UnTooled]) {
   model;
 
   constructor(config = {}) {
     super();
-    const { model = "gpt-3.5-turbo" } = config;
+    this.providerTag = "generic-openai";
+    const { model = "gpt-4.1-nano" } = config;
     const client = new OpenAI({
       baseURL: process.env.GENERIC_OPEN_AI_BASE_PATH,
       apiKey: process.env.GENERIC_OPEN_AI_API_KEY ?? null,
-      maxRetries: 3,
+      defaultHeaders: {
+        "User-Agent": getAnythingLLMUserAgent(),
+        ...GenericOpenAiLLM.parseCustomHeaders(),
+      },
     });
 
     this._client = client;
     this.model = model;
     this.verbose = true;
+    this._supportsToolCalling = null;
     this.maxTokens = process.env.GENERIC_OPEN_AI_MAX_TOKENS
       ? toValidNumber(process.env.GENERIC_OPEN_AI_MAX_TOKENS, 1024)
       : 1024;
@@ -34,13 +49,40 @@ class GenericOpenAiProvider extends InheritMultiple([Provider, UnTooled]) {
     return this._client;
   }
 
+  /**
+   * Generic OpenAI backends follow the OpenAI multimodal schema, so audio
+   * attachments must be sent as `input_audio` blocks rather than `image_url`.
+   * Mirrors the audio handling in the GenericOpenAi chat provider; images and
+   * all other attachments keep the inherited `image_url` behavior.
+   * @param {Object} message - The message to format
+   * @returns {Object} - Message formatted for the API
+   */
+  formatMessageWithAttachments(message) {
+    if (!message.attachments || message.attachments.length === 0)
+      return message;
+
+    const content = [{ type: "text", text: message.content }];
+    for (const attachment of message.attachments) {
+      content.push(attachmentToContentBlock(attachment));
+    }
+
+    const { attachments: _, ...rest } = message;
+    return { ...rest, content };
+  }
+
+  get supportsAgentStreaming() {
+    // Honor streaming being disabled via ENV via user preference.
+    if (process.env.GENERIC_OPENAI_STREAMING_DISABLED === "true") return false;
+    return true;
+  }
+
   async #handleFunctionCallChat({ messages = [] }) {
     return await this.client.chat.completions
       .create({
         model: this.model,
-        temperature: 0,
+        ...temperatureParam(this.temperature),
         messages,
-        max_tokens: this.maxTokens,
+        ...maxTokensParam(this.maxTokens, GenericOpenAiLLM.maxTokensKey()),
       })
       .then((result) => {
         if (!result.hasOwnProperty("choices"))
@@ -54,58 +96,108 @@ class GenericOpenAiProvider extends InheritMultiple([Provider, UnTooled]) {
       });
   }
 
+  async #handleFunctionCallStream({ messages = [] }) {
+    return await this.client.chat.completions.create({
+      model: this.model,
+      ...temperatureParam(this.temperature),
+      stream: true,
+      messages,
+      ...maxTokensParam(this.maxTokens, GenericOpenAiLLM.maxTokensKey()),
+    });
+  }
+
   /**
-   * Create a completion based on the received messages.
-   *
-   * @param messages A list of messages to send to the API.
-   * @param functions
-   * @returns The completion.
+   * Stream a chat completion with tool calling support.
+   * Uses native tool calling when supported, otherwise falls back to UnTooled.
+   */
+  async stream(messages, functions = [], eventHandler = null) {
+    const useNative = await this.supportsNativeToolCalling();
+
+    if (!useNative) {
+      return await UnTooled.prototype.stream.call(
+        this,
+        messages,
+        functions,
+        this.#handleFunctionCallStream.bind(this),
+        eventHandler
+      );
+    }
+
+    this.providerLog(
+      "Provider.stream (tooled) - will process this chat completion."
+    );
+
+    try {
+      return await tooledStream(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        eventHandler,
+        {
+          provider: this,
+          maxTokens: this.maxTokens,
+          maxTokensKey: GenericOpenAiLLM.maxTokensKey(),
+        }
+      );
+    } catch (error) {
+      console.error(error.message, error);
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Create a non-streaming completion with tool calling support.
+   * Uses native tool calling when supported, otherwise falls back to UnTooled.
    */
   async complete(messages, functions = []) {
+    const useNative = await this.supportsNativeToolCalling();
+
+    if (!useNative) {
+      return await UnTooled.prototype.complete.call(
+        this,
+        messages,
+        functions,
+        this.#handleFunctionCallChat.bind(this)
+      );
+    }
+
     try {
-      let completion;
-      if (functions.length > 0) {
-        const { toolCall, text } = await this.functionCall(
-          messages,
-          functions,
-          this.#handleFunctionCallChat.bind(this)
-        );
-
-        if (toolCall !== null) {
-          this.providerLog(`Valid tool call found - running ${toolCall.name}.`);
-          this.deduplicator.trackRun(toolCall.name, toolCall.arguments);
-          return {
-            result: null,
-            functionCall: {
-              name: toolCall.name,
-              arguments: toolCall.arguments,
-            },
-            cost: 0,
-          };
+      const result = await tooledComplete(
+        this.client,
+        this.model,
+        messages,
+        functions,
+        this.getCost.bind(this),
+        {
+          provider: this,
+          maxTokens: this.maxTokens,
+          maxTokensKey: GenericOpenAiLLM.maxTokensKey(),
         }
-        completion = { content: text };
+      );
+
+      if (result.retryWithError) {
+        return this.complete([...messages, result.retryWithError], functions);
       }
 
-      if (!completion?.content) {
-        this.providerLog(
-          "Will assume chat completion without tool call inputs."
-        );
-        const response = await this.client.chat.completions.create({
-          model: this.model,
-          messages: this.cleanMsgs(messages),
-        });
-        completion = response.choices[0].message;
-      }
-
-      // The UnTooled class inherited Deduplicator is mostly useful to prevent the agent
-      // from calling the exact same function over and over in a loop within a single chat exchange
-      // _but_ we should enable it to call previously used tools in a new chat interaction.
-      this.deduplicator.reset("runs");
-      return {
-        result: completion.content,
-        cost: 0,
-      };
+      return result;
     } catch (error) {
+      if (error instanceof OpenAI.AuthenticationError) throw error;
+      if (
+        error instanceof OpenAI.RateLimitError ||
+        error instanceof OpenAI.InternalServerError ||
+        error instanceof OpenAI.APIError
+      ) {
+        throw new RetryError(error.message);
+      }
       throw error;
     }
   }

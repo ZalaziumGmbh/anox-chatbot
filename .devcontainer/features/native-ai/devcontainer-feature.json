@@ -1,0 +1,9 @@
+{
+  "id": "native-ai",
+  "version": "1.0.0",
+  "name": "Native Claude and Codex",
+  "description": "Pinned native CLIs in the development image, separate from persistent login state.",
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

@@ -3,6 +3,7 @@ run-name: Chatbot build
 on:
   push:
     branches: [zalazium-dev]
+    paths-ignore: ['.github/one-release.json']
   workflow_dispatch:
 permissions:
   contents: read

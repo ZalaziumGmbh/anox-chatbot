@@ -3,6 +3,7 @@ run-name: Chatbot qualify
 on:
   pull_request:
     branches: [zalazium-dev]
+    paths-ignore: ['.github/one-release.json']
   workflow_call:
     inputs:
       build:

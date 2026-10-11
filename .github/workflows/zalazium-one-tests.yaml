@@ -40,6 +40,7 @@ jobs:
             corepack yarn prisma generate
             corepack yarn prisma migrate deploy
             corepack yarn prisma migrate deploy
+            node scripts/security-regression.cjs
             node scripts/zalazium-one-smoke.cjs
             cd ..
             corepack yarn jest --runInBand

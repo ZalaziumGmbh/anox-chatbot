@@ -35,6 +35,12 @@ jobs:
           public_dir=$(mktemp -d /home/tester/sources/chatbot-ci/job-XXXXXX)
           chmod 755 "$public_dir"
           git archive HEAD | tar -x -C "$public_dir"
+          for part in embed browser-extension; do
+            expected=$(git ls-tree HEAD "$part" | awk '{print $3}')
+            test "$(git -C "$part" rev-parse HEAD)" = "$expected"
+            mkdir -p "$public_dir/$part"
+            git -C "$part" archive HEAD | tar -x -C "$public_dir/$part"
+          done
           printf 'PUBLIC_DIR=%s\n' "$public_dir" >> "$GITHUB_ENV"
       - name: Run the full suite with synthetic data and no credentials
         shell: bash

@@ -47,4 +47,46 @@ async function verifyOfficeImports() {
   }
   console.log("PASS expression guard, ONNX wire compatibility and DOCX/PPTX/ODT imports");
 }
-verifyOfficeImports().catch((error) => { console.error(error); process.exitCode = 1; });
+async function verifyUploadParser() {
+  // Keep a vulnerable parser's synchronous loop bounded in its own process.
+  const { execFile } = require("node:child_process");
+  const { promisify } = require("node:util");
+  const program = `
+    const assert = require("node:assert/strict");
+    const http = require("node:http");
+    const multer = require("multer");
+    const upload = multer({limits: {fieldArrayIndexLimit: 0}}).single("file");
+    const server = http.createServer((req, res) => upload(req, res, (error) => {
+      res.writeHead(error ? 400 : 200, {"Content-Type": "application/json"});
+      res.end(JSON.stringify(error ? {denied: true} : {
+        greeting: req.body.greeting,
+        file: req.file?.buffer.toString("utf8"),
+      }));
+    }));
+    (async () => {
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const url = "http://127.0.0.1:" + server.address().port;
+      const valid = new FormData();
+      valid.append("greeting", "Synthetic Grüße");
+      valid.append("file", new Blob(["Synthetic file"]), "synthetic.txt");
+      const accepted = await fetch(url, {method: "POST", body: valid});
+      assert.equal(accepted.status, 200);
+      assert.deepEqual(await accepted.json(), {greeting: "Synthetic Grüße", file: "Synthetic file"});
+      for (const index of ["1", "4294967294"]) {
+        const malformed = new FormData();
+        malformed.append("items[" + index + "]", "synthetic");
+        malformed.append("items[label]", "synthetic");
+        assert.equal((await fetch(url, {method: "POST", body: malformed})).status, 400);
+      }
+      const next = new FormData(); next.append("greeting", "Still responsive");
+      assert.equal((await fetch(url, {method: "POST", body: next})).status, 200);
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    })().catch(error => { console.error(error); process.exit(1); });
+  `;
+  await promisify(execFile)(process.execPath, ["-e", program], {
+    cwd: path.resolve(__dirname, ".."), timeout: 5000,
+  });
+  console.log("PASS multipart file/Unicode upload and bounded malformed-field rejection");
+}
+Promise.resolve().then(verifyUploadParser).then(verifyOfficeImports).catch((error) => { console.error(error); process.exitCode = 1; });

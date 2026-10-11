@@ -1,49 +1,129 @@
 name: Zalazium One qualification
+run-name: Chatbot qualify
 on:
   pull_request:
     branches: [zalazium-dev]
-  push:
-    branches: [fix/zalazium-one-chatbot]
   workflow_call:
+    inputs:
+      build:
+        type: boolean
+        default: false
+    secrets:
+      DOCKER_USER:
+        required: false
+      DOCKER_TOKEN:
+        required: false
 permissions:
   contents: read
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  qualify:
+    runs-on: [self-hosted, Linux, X64, zalazium-eu, 'zalazium-eu-${{ github.run_id }}']
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
           submodules: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.23.3'
-      - name: Install system test tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - name: Qualify as an isolated unprivileged account
+      - name: Export public inputs for the German rootless tester
         shell: bash
         run: |
           set -euo pipefail
-          node_bin=$(dirname "$(command -v node)")
-          sudo useradd --create-home tester
-          sudo mkdir -p /home/tester/chatbot
-          sudo rsync -rl --exclude=.git --include='/docker/.env.example' --include='/frontend/.env.production' --exclude='.env*' --exclude=node_modules ./ /home/tester/chatbot/
-          sudo chown -R tester:tester /home/tester/chatbot
-          sudo runuser -u tester -- env -i HOME=/home/tester PATH="$node_bin:/usr/bin:/bin" CI=true PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true ONE_SYNTHETIC_TEST=1 sh -c '
-            set -eu
-            cd /home/tester/chatbot
-            corepack yarn install --frozen-lockfile
-            for part in server collector frontend embed; do
-              (cd "$part" && corepack yarn install --frozen-lockfile)
-            done
-            cd server
-            corepack yarn prisma generate
-            corepack yarn prisma migrate deploy
-            corepack yarn prisma migrate deploy
-            node scripts/security-regression.cjs
-            node scripts/zalazium-one-smoke.cjs
-            cd ..
-            corepack yarn jest --runInBand
-            (cd embed && corepack yarn build)
-            (cd frontend && corepack yarn build)
-          '
+          test "$(id -un)" = tester
+          test "$(id -u)" = 1000
+          umask 022
+          mkdir -p /home/tester/sources/chatbot-ci
+          public_dir=$(mktemp -d /home/tester/sources/chatbot-ci/job-XXXXXX)
+          chmod 755 "$public_dir"
+          git archive HEAD | tar -x -C "$public_dir"
+          for part in embed browser-extension; do
+            expected=$(git ls-tree HEAD "$part" | awk '{print $3}')
+            test "$(git -C "$part" rev-parse HEAD)" = "$expected"
+            mkdir -p "$public_dir/$part"
+            git -C "$part" archive HEAD | tar -x -C "$public_dir/$part"
+          done
+          printf 'PUBLIC_DIR=%s\n' "$public_dir" >> "$GITHUB_ENV"
+      - name: Run the full suite with synthetic data and no credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR=/run/user/1000 DOCKER_HOST=unix:///run/user/1000/docker.sock \
+            docker run --rm --memory 3g --cpus 2 \
+            --mount "type=bind,src=$PUBLIC_DIR,dst=/source,readonly" \
+            node:22.23.3-slim sh -ec '
+              apt-get update -qq
+              apt-get install -y --no-install-recommends git ca-certificates ffmpeg >/dev/null
+              mkdir /tmp/app
+              cp -R /source/. /tmp/app/
+              chown -R node:node /tmp/app
+              runuser -u node -- env -i HOME=/home/node PATH=/usr/local/bin:/usr/bin:/bin \
+                CI=true PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true ONE_SYNTHETIC_TEST=1 sh -ec '\''
+                  cd /tmp/app
+                  yarn install --frozen-lockfile --non-interactive
+                  for part in server collector frontend embed; do
+                    (cd "$part" && yarn install --frozen-lockfile --non-interactive)
+                  done
+                  cd server
+                  yarn prisma generate
+                  yarn prisma migrate deploy
+                  yarn prisma migrate deploy
+                  node scripts/security-regression.cjs
+                  node scripts/zalazium-one-smoke.cjs
+                  cd ..
+                  yarn jest --runInBand
+                  (cd embed && yarn build)
+                  (cd frontend && yarn build)
+                '\''
+            '
+      - name: Build and qualify the immutable candidate
+        if: inputs.build
+        shell: bash
+        run: |
+          set -euo pipefail
+          env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR=/run/user/1000 DOCKER_HOST=unix:///run/user/1000/docker.sock \
+            ONE_REVISION="$GITHUB_SHA" PUBLIC_DIR="$PUBLIC_DIR" sh -ec '
+              cd "$PUBLIC_DIR"
+              docker build -f docker/Dockerfile --label org.opencontainers.image.revision="$ONE_REVISION" \
+                -t "zalaziumcode/chatbot:one-$ONE_REVISION" .
+              python3 server/scripts/qualify-one-image.py "zalaziumcode/chatbot:one-$ONE_REVISION"
+              docker save --output "$PUBLIC_DIR/image.tar" "zalaziumcode/chatbot:one-$ONE_REVISION"
+            '
+      - name: Publish only the exact tested image
+        if: inputs.build
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKER_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          private_dir=$(mktemp -d /dev/shm/zalazium/registry-XXXXXX)
+          trap 'rm -rf "$private_dir"' EXIT
+          clean_skopeo() {
+            env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin skopeo "$@"
+          }
+          printf '%s' "$REGISTRY_PASSWORD" | clean_skopeo login --authfile "$private_dir/auth.json" \
+            --username "$REGISTRY_USER" --password-stdin docker.io
+          candidate="zalaziumcode/chatbot:one-$GITHUB_SHA"
+          tested_id=$(clean_skopeo inspect --raw "docker-archive:$PUBLIC_DIR/image.tar" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
+          if clean_skopeo inspect --authfile "$private_dir/auth.json" --raw "docker://$candidate" \
+              > "$private_dir/existing.json" 2> "$private_dir/inspect.err"; then
+            existing_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["config"]["digest"])' "$private_dir/existing.json")
+            test "$existing_id" = "$tested_id"
+          else
+            grep -qi 'manifest unknown' "$private_dir/inspect.err"
+          fi
+          clean_skopeo copy --retry-times 3 --dest-authfile "$private_dir/auth.json" \
+            --digestfile "$PUBLIC_DIR/digest" "docker-archive:$PUBLIC_DIR/image.tar" "docker://$candidate"
+          published_id=$(clean_skopeo inspect --authfile "$private_dir/auth.json" --raw "docker://$candidate" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
+          test "$tested_id" = "$published_id"
+          cat "$PUBLIC_DIR/digest"
+      - name: Remove public scratch files
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${PUBLIC_DIR:-}" == /home/tester/sources/chatbot-ci/job-* ]]; then
+            rm -rf -- "$PUBLIC_DIR"
+          fi

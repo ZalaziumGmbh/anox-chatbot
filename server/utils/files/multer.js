@@ -4,6 +4,9 @@ const fs = require("fs");
 const { v4 } = require("uuid");
 const { normalizePath, sanitizeFileName } = require(".");
 
+// Upload form text fields are scalar; reject attacker-controlled sparse arrays.
+const fieldLimits = { fieldArrayIndexLimit: 0 };
+
 /**
  * Handle File uploads for auto-uploading.
  * Mostly used for internal GUI/API uploads.
@@ -90,7 +93,7 @@ const pfpUploadStorage = multer.diskStorage({
  * @param {NextFunction} next
  */
 function handleFileUpload(request, response, next) {
-  const upload = multer({ storage: fileUploadStorage }).single("file");
+  const upload = multer({ storage: fileUploadStorage, limits: fieldLimits }).single("file");
   upload(request, response, function (err) {
     if (err) {
       response
@@ -114,7 +117,7 @@ function handleFileUpload(request, response, next) {
  * @param {NextFunction} next
  */
 function handleAPIFileUpload(request, response, next) {
-  const upload = multer({ storage: fileAPIUploadStorage }).single("file");
+  const upload = multer({ storage: fileAPIUploadStorage, limits: fieldLimits }).single("file");
   upload(request, response, function (err) {
     if (err) {
       response
@@ -134,7 +137,7 @@ function handleAPIFileUpload(request, response, next) {
  * Handle logo asset uploads
  */
 function handleAssetUpload(request, response, next) {
-  const upload = multer({ storage: assetUploadStorage }).single("logo");
+  const upload = multer({ storage: assetUploadStorage, limits: fieldLimits }).single("logo");
   upload(request, response, function (err) {
     if (err) {
       response
@@ -154,7 +157,7 @@ function handleAssetUpload(request, response, next) {
  * Handle PFP file upload as logos
  */
 function handlePfpUpload(request, response, next) {
-  const upload = multer({ storage: pfpUploadStorage }).single("file");
+  const upload = multer({ storage: pfpUploadStorage, limits: fieldLimits }).single("file");
   upload(request, response, function (err) {
     if (err) {
       response
@@ -177,7 +180,7 @@ function handlePfpUpload(request, response, next) {
 function handleAudioUpload(request, response, next) {
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 25 * 1024 * 1024 }, // 25MB matches OpenAI Whisper limit
+    limits: { ...fieldLimits, fileSize: 25 * 1024 * 1024 }, // 25MB matches OpenAI Whisper limit
     fileFilter: (_req, file, cb) => {
       if (!file.mimetype?.startsWith("audio/"))
         return cb(new Error("Only audio uploads are allowed."));
@@ -202,7 +205,7 @@ function handleAudioUpload(request, response, next) {
 function handleImageGenUpload(request, response, next) {
   const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 25 * 1024 * 1024 },
+    limits: { ...fieldLimits, fileSize: 25 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       if (!file.mimetype?.startsWith("image/"))
         return cb(new Error("Only image uploads are allowed."));

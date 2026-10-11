@@ -1,9 +1,9 @@
 {
-  "revision": "1834d137cd410e4d0cf5b4ff064cf56c3c38c9ba",
-  "run_id": 38005069761,
-  "digest": "sha256:bb720d759c83992ac2913b9f57426db339a8f40c12de6899be2957de7e086ca3",
-  "previous_digest": null,
-  "backup_id": "3bcd605b06918791ff64b07f407c72c5909987d990cc5629f5badbb420e932cd",
+  "revision": "73a95b981e33084129106e82aa4b595daf7abdc8",
+  "run_id": 38110390985,
+  "digest": "sha256:f7c9931101a891ef350d936afd0222d2f16bd0045f44466e1a2fccf710e5fd2e",
+  "previous_digest": "sha256:bb720d759c83992ac2913b9f57426db339a8f40c12de6899be2957de7e086ca3",
+  "backup_id": "c39390c9c7556ec0487744cd7b8080adb32090ccbc7d2f0b408f7d3c2aa7cb3f",
   "checks": [
     "admin",
     "workflow",
@@ -11,5 +11,5 @@
     "isolated-restore",
     "schema-rollback"
   ],
-  "evidence": "https://github.com/ZalaziumGmbh/mastermind/pull/4"
+  "evidence": "https://github.com/ZalaziumGmbh/mastermind/pull/5"
 }

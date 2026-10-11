@@ -10,5 +10,8 @@
   },
   "dependencies": {
     "express": "^5.1.0"
+  },
+  "overrides": {
+    "proxy-addr": "2.0.8"
   }
 }

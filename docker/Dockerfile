@@ -149,6 +149,7 @@ WORKDIR /app
 # Install server layer
 # Also pull and build collector deps (chromium issues prevent bad bindings)
 FROM build AS backend-build
+COPY --chown=anythingllm:anythingllm ./security.cjs /app/security.cjs
 COPY --chown=anythingllm:anythingllm ./server /app/server/
 WORKDIR /app/server
 RUN yarn install --production --network-timeout 100000 && yarn cache clean

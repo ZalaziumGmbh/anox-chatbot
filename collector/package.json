@@ -34,7 +34,7 @@
     "moment": "^2.29.4",
     "node-html-parser": "^6.1.13",
     "node-xlsx": "^0.24.0",
-    "officeparser": "^4.0.5",
+    "officeparser": "5.2.2",
     "openai": "4.95.1",
     "pdf-parse": "^1.1.1",
     "puppeteer": "~21.5.2",
@@ -63,6 +63,9 @@
   },
   "resolutions": {
     "string-width": "^4.2.3",
-    "wrap-ansi": "^7.0.0"
+    "wrap-ansi": "^7.0.0",
+    "protobufjs": "7.6.4",
+    "proxy-addr": "2.0.8",
+    "basic-ftp": "5.2.1"
   }
 }

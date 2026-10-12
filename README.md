@@ -325,7 +325,7 @@ This project is [MIT](./LICENSE) licensed.
 ## Development container
 
 Read [native CLI state and rebuild instructions](.devcontainer/AI-STATE.md) before
-the first rebuild. Select existing developer-specific Codex/Claude volumes
-explicitly; missing selections stop creation before replacing a container.
+the first rebuild. All Codex/Claude state lives in the private volume
+`anox-chatbot-volume` at `/persist`; migrate older separate volumes first.
 Native CLI binaries are installed in the development image, outside login state.
 The shared CLI additions are confined to development-container builds.

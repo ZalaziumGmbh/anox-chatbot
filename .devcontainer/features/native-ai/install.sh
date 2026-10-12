@@ -25,7 +25,5 @@ install -m 0755 "$(readlink -f "$stage/.local/bin/claude")" "$install_dir/claude
 ln -s "$install_dir/claude" /usr/local/bin/claude
 test "$(codex --version)" = "codex-cli $codex_version"
 claude --version | grep -F "$claude_version" >/dev/null
-# Docker copies these empty directories and their ownership into new volumes.
-for directory in "${_REMOTE_USER_HOME}/.codex" "${_REMOTE_USER_HOME}/.claude"; do
-    install -d -m 0700 -o "${_REMOTE_USER}" -g "$(id -gn "${_REMOTE_USER}")" "$directory"
-done
+# Docker copies this private skeleton into a new, empty state volume.
+install -d -m 0700 -o root -g root /persist /persist/codex /persist/claude

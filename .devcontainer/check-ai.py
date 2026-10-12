@@ -7,10 +7,18 @@ import tomllib
 
 for tool in ("codex", "claude"):
     subprocess.run([tool, "--version"], check=True)
+# All tool state lives in one private, root-owned volume.
+persist = Path("/persist")
+if not persist.is_mount() or persist.stat().st_uid != 0 or persist.stat().st_mode & 0o077:
+    raise SystemExit("State volume /persist is absent, not root-owned or not private")
 for name in ("CODEX_HOME", "CLAUDE_CONFIG_DIR"):
     folder = Path(os.environ[name])
-    if not folder.is_dir() or not os.access(folder, os.W_OK):
-        raise SystemExit("AI state volume is absent or not writable: " + name)
+    if persist not in folder.parents or not folder.is_dir() or not os.access(folder, os.W_OK):
+        raise SystemExit("AI state is outside /persist, absent or not writable: " + name)
+# Codex recreates its daemon socket; an old link points into a previous container's /tmp.
+socket = Path(os.environ["CODEX_HOME"]) / "app-server-control" / "app-server-control.sock"
+if socket.is_symlink() and not socket.exists():
+    socket.unlink()
 # File storage survives container recreation. Keep all other configuration intact.
 config = Path(os.environ["CODEX_HOME"]) / "config.toml"
 try:

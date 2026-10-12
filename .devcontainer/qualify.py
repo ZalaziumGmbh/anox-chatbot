@@ -70,6 +70,8 @@ claude --version
 command -v git
 command -v ps
 test "$(readlink -f "$(command -v codex)")" != "$CODEX_HOME/codex"
+test "$(stat -c %a:%U /persist)" = 700:root
+test "$(stat -c %a:%U "$CODEX_HOME")" = 700:root
 '''
         for state in ('CODEX_HOME', 'CLAUDE_CONFIG_DIR'):
             if seed:
@@ -98,14 +100,12 @@ test "$(readlink -f "$(command -v codex)")" != "$CODEX_HOME/codex"
             if 'type=volume' not in mount:
                 continue
             source = next(part[7:] for part in mount.split(',') if part.startswith('source='))
-            name = 'native-qualification-' + nonce + '-' + str(len(volumes))
+            # The suffix selects a fresh state volume; Docker fills it from the image skeleton.
+            name = source.replace('${localEnv:ZALAZIUM_DEV_SUFFIX}', env['ZALAZIUM_DEV_SUFFIX'])
+            if name == source or '${' in name:
+                raise RuntimeError('State volume names must use ZALAZIUM_DEV_SUFFIX only')
             docker('volume', 'create', '--label', 'zalazium.qualification=' + nonce, name)
             volumes.append(name)
-            variable = re.fullmatch(r'\$\{localEnv:([A-Z0-9_]+)\}', source)
-            if variable:
-                env[variable.group(1)] = name
-            else:
-                mounts[mounts.index(mount)] = mount.replace('source=' + source + ',', 'source=' + name + ',', 1)
         config['mounts'] = mounts
         workspace_volume = None
         if config.get('remoteUser', 'root') != 'root':
@@ -119,11 +119,6 @@ test "$(readlink -f "$(command -v codex)")" != "$CODEX_HOME/codex"
             config['workspaceMount'] = 'source=' + workspace_volume + ',target=' + workspace + ',type=volume'
         config.setdefault('runArgs', []).extend(['--memory=2g', '--cpus=2'])
         path.write_text(json.dumps(config, indent=2) + '\n')
-        codex_variable = next(name for name in env if name.endswith('_CODEX_VOLUME'))
-        actual = env[codex_variable]
-        env[codex_variable] = 'native-missing-' + nonce
-        up(refusal=('native-missing-' + nonce, 'no such volume'))
-        env[codex_variable] = actual
         if workspace_volume:
             prepared = up('--skip-post-create')
             selected = json.loads(docker('inspect', '--format', '{{json .Mounts}}', prepared))
@@ -163,7 +158,7 @@ test "$(readlink -f "$(command -v codex)")" != "$CODEX_HOME/codex"
         docker('rm', '-f', recreated)
         renamed = up()
         verify(renamed)
-        print('PASS missing-volume refusal, start, restart, recreation, checkout collision and folder rename; no real login was used', flush=True)
+        print('PASS private state volume, start, restart, recreation, checkout collision and folder rename; no real login was used', flush=True)
     finally:
         for identity in reversed(list(dict.fromkeys(containers))):
             run(['docker', 'rm', '-f', identity], check=False)

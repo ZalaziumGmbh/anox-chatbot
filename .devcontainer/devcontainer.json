@@ -17,7 +17,7 @@
   "remoteUser": "root",
   "runArgs": ["--name=anox-chatbot${localEnv:ZALAZIUM_DEV_SUFFIX}"],
   "mounts": ["source=anox-chatbot${localEnv:ZALAZIUM_DEV_SUFFIX}-volume,target=/persist,type=volume"],
-  "containerEnv": {"GH_CONFIG_DIR": "/persist/gh", "CODEX_HOME": "/persist/codex", "CLAUDE_CONFIG_DIR": "/persist/claude", "DISABLE_AUTOUPDATER": "1"},
+  "containerEnv": {"CODEX_HOME": "/persist/codex", "CLAUDE_CONFIG_DIR": "/persist/claude", "DISABLE_AUTOUPDATER": "1"},
   "postStartCommand": "python3 .devcontainer/check-ai.py",
 
   "forwardPorts": [3001, 3000],
@@ -25,7 +25,6 @@
   // Features to add to the dev container. More info: https://containers.dev/features.
   "features": {
     "./features/native-ai": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {},
     // Docker very useful linter
     "ghcr.io/dhoeric/features/hadolint:1": {
       "version": "latest"

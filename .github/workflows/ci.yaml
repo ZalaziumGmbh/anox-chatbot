@@ -42,7 +42,7 @@ jobs:
             "$test_uid" "$test_uid" | sudo tee /home/tester/.config/systemd/user/docker.service.d/runtime.conf >/dev/null
           sudo chown -R tester:tester /home/tester/.config
           sudo mkdir -p /home/tester/app
-          sudo rsync -rl --exclude=.git --exclude='.env*' --exclude=data ./ /home/tester/app/
+          sudo rsync -rl --exclude=.git --exclude=.env --exclude=data ./ /home/tester/app/
           sudo chown -R tester:tester /home/tester/app
           sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
             XDG_RUNTIME_DIR="/run/user/${test_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${test_uid}/bus" \

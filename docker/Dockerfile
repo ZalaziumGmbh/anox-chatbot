@@ -1,5 +1,5 @@
 # Setup base image
-FROM ubuntu:noble-20251013 AS base
+FROM mirror.gcr.io/library/ubuntu:noble-20251013 AS base
 
 # Build arguments
 ARG ARG_UID=1000
@@ -138,7 +138,7 @@ WORKDIR /app
 # Use BUILDPLATFORM to run on the native host architecture (not emulated).
 # This avoids esbuild crashing under QEMU when cross-compiling.
 # The output (static HTML/CSS/JS) is platform-independent.
-FROM --platform=$BUILDPLATFORM node:22.23.3-slim AS frontend-build
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/node:22.23.3-slim AS frontend-build
 WORKDIR /app/frontend
 COPY ./frontend/package.json ./frontend/yarn.lock ./
 RUN yarn install --network-timeout 100000 && yarn cache clean

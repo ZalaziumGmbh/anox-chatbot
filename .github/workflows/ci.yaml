@@ -1,8 +1,10 @@
 name: ci
-# Every push to main is tested, built and published as :latest; DEV pulls it automatically.
-# PRD changes only through the release workflow.
+# Pull requests run the suite; every push to main is also built and published as :latest,
+# which DEV pulls automatically. PRD changes only through the release workflow.
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 permissions:
@@ -11,10 +13,110 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  image:
-    uses: ./.github/workflows/zalazium-one-tests.yaml
-    with:
-      build: true
-    secrets:
-      DOCKER_USER: ${{ secrets.DOCKER_USER }}
-      DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Prepare isolated rootless builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          . /etc/os-release
+          printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
+            "$(dpkg --print-architecture)" "$VERSION_CODENAME" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y uidmap dbus-user-session docker-ce-rootless-extras skopeo
+          sudo useradd --create-home tester
+          test_uid=$(id -u tester)
+          sudo loginctl enable-linger tester
+          sudo systemctl start "user@${test_uid}.service"
+          sudo install -d -m 700 -o tester -g tester /home/tester/.config/systemd/user/docker.service.d
+          printf '[Service]\nExecStart=\nExecStart=/usr/bin/env -i HOME=/home/tester USER=tester LOGNAME=tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin XDG_CONFIG_HOME=/home/tester/.config XDG_DATA_HOME=/home/tester/.local/share XDG_RUNTIME_DIR=/run/user/%s DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%s/bus NOTIFY_SOCKET=${NOTIFY_SOCKET} /usr/bin/dockerd-rootless.sh\n' \
+            "$test_uid" "$test_uid" | sudo tee /home/tester/.config/systemd/user/docker.service.d/runtime.conf >/dev/null
+          sudo chown -R tester:tester /home/tester/.config
+          sudo mkdir -p /home/tester/app
+          sudo rsync -rl --exclude=.git --exclude='.env*' --exclude=data ./ /home/tester/app/
+          sudo chown -R tester:tester /home/tester/app
+          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin \
+            XDG_RUNTIME_DIR="/run/user/${test_uid}" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${test_uid}/bus" \
+            dockerd-rootless-setuptool.sh install --force || {
+              sudo journalctl --no-pager -n 60 "_UID=${test_uid}" "_SYSTEMD_USER_UNIT=docker.service"
+              exit 1
+            }
+          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
+            docker info --format '{{json .SecurityOptions}}' | grep -q rootless
+      - name: Run the full suite with synthetic data and no credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_uid=$(id -u tester)
+          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
+            docker run --rm --memory 3g --cpus 2 \
+            --mount type=bind,src=/home/tester/app,dst=/source,readonly \
+            node:22.23.3-slim sh -ec '
+              apt-get update -qq
+              apt-get install -y --no-install-recommends git ca-certificates ffmpeg >/dev/null
+              mkdir /tmp/app
+              cp -R /source/. /tmp/app/
+              chown -R node:node /tmp/app
+              runuser -u node -- env -i HOME=/home/node PATH=/usr/local/bin:/usr/bin:/bin \
+                CI=true PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true ONE_SYNTHETIC_TEST=1 sh -ec '\''
+                  cd /tmp/app
+                  yarn install --frozen-lockfile --non-interactive
+                  for part in server collector frontend embed; do
+                    (cd "$part" && yarn install --frozen-lockfile --non-interactive)
+                  done
+                  cd server
+                  yarn prisma generate
+                  yarn prisma migrate deploy
+                  yarn prisma migrate deploy
+                  node scripts/security-regression.cjs
+                  node scripts/zalazium-one-smoke.cjs
+                  cd ..
+                  yarn jest --runInBand
+                  (cd embed && yarn build)
+                  (cd frontend && yarn build)
+                '\''
+            '
+      - name: Build and test the image without registry credentials
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_uid=$(id -u tester)
+          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
+            REVISION="$GITHUB_SHA" sh -c '
+              set -eu
+              cd /home/tester/app
+              docker build -f docker/Dockerfile --label org.opencontainers.image.revision="$REVISION" \
+                -t zalaziumcode/anox-chatbot:latest .
+              python3 server/scripts/qualify-one-image.py zalaziumcode/anox-chatbot:latest
+            '
+      - name: Publish latest
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY_USER: ${{ secrets.DOCKER_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_uid=$(id -u tester)
+          sudo install -d -m 700 -o tester -g tester /dev/shm/registry
+          trap 'sudo rm -rf /dev/shm/registry' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
+            DOCKER_CONFIG=/dev/shm/registry sh -c '
+              set -eu
+              docker login --username "$1" --password-stdin docker.io >/dev/null
+              docker push zalaziumcode/anox-chatbot:latest
+            ' sh "$REGISTRY_USER"

@@ -152,7 +152,9 @@ FROM build AS backend-build
 COPY --chown=anythingllm:anythingllm ./security.cjs /app/security.cjs
 COPY --chown=anythingllm:anythingllm ./server /app/server/
 WORKDIR /app/server
-RUN yarn install --production --network-timeout 100000 && yarn cache clean
+# Optional GitHub token secret avoids rate limits on @vscode/ripgrep's release download.
+RUN --mount=type=secret,id=github_token,env=GITHUB_TOKEN \
+    yarn install --production --network-timeout 100000 && yarn cache clean
 WORKDIR /app
 
 # Install collector dependencies

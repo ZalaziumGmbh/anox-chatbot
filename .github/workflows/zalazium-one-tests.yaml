@@ -2,8 +2,7 @@ name: Zalazium One qualification
 run-name: Chatbot qualify
 on:
   pull_request:
-    branches: [zalazium-dev]
-    paths-ignore: ['.github/one-release.json']
+    branches: [main]
   workflow_call:
     inputs:
       build:
@@ -86,11 +85,11 @@ jobs:
             ONE_REVISION="$GITHUB_SHA" PUBLIC_DIR="$PUBLIC_DIR" sh -ec '
               cd "$PUBLIC_DIR"
               docker build -f docker/Dockerfile --label org.opencontainers.image.revision="$ONE_REVISION" \
-                -t "zalaziumcode/anox-chatbot:one-$ONE_REVISION" .
-              python3 server/scripts/qualify-one-image.py "zalaziumcode/anox-chatbot:one-$ONE_REVISION"
-              docker save --output "$PUBLIC_DIR/image.tar" "zalaziumcode/anox-chatbot:one-$ONE_REVISION"
+                -t zalaziumcode/anox-chatbot:latest .
+              python3 server/scripts/qualify-one-image.py zalaziumcode/anox-chatbot:latest
+              docker save --output "$PUBLIC_DIR/image.tar" zalaziumcode/anox-chatbot:latest
             '
-      - name: Publish only the exact tested image
+      - name: Publish the tested image as latest
         if: inputs.build
         env:
           REGISTRY_USER: ${{ secrets.DOCKER_USER }}
@@ -105,16 +104,9 @@ jobs:
           }
           printf '%s' "$REGISTRY_PASSWORD" | clean_skopeo login --authfile "$private_dir/auth.json" \
             --username "$REGISTRY_USER" --password-stdin docker.io
-          candidate="zalaziumcode/anox-chatbot:one-$GITHUB_SHA"
+          candidate=zalaziumcode/anox-chatbot:latest
           tested_id=$(clean_skopeo inspect --raw "docker-archive:$PUBLIC_DIR/image.tar" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')
-          if clean_skopeo inspect --authfile "$private_dir/auth.json" --raw "docker://$candidate" \
-              > "$private_dir/existing.json" 2> "$private_dir/inspect.err"; then
-            existing_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["config"]["digest"])' "$private_dir/existing.json")
-            test "$existing_id" = "$tested_id"
-          else
-            grep -qi 'manifest unknown' "$private_dir/inspect.err"
-          fi
           clean_skopeo copy --retry-times 3 --dest-authfile "$private_dir/auth.json" \
             --digestfile "$PUBLIC_DIR/digest" "docker-archive:$PUBLIC_DIR/image.tar" "docker://$candidate"
           published_id=$(clean_skopeo inspect --authfile "$private_dir/auth.json" --raw "docker://$candidate" \

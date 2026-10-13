@@ -1,0 +1,20 @@
+name: ci
+# Every push to main is tested, built and published as :latest; DEV pulls it automatically.
+# PRD changes only through the release workflow.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  image:
+    uses: ./.github/workflows/zalazium-one-tests.yaml
+    with:
+      build: true
+    secrets:
+      DOCKER_USER: ${{ secrets.DOCKER_USER }}
+      DOCKER_TOKEN: ${{ secrets.DOCKER_TOKEN }}

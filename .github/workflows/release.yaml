@@ -1,0 +1,44 @@
+name: release
+run-name: ${{ inputs.action }} PRD
+# Moves the PRD tag without rebuilding: release copies the tested :latest image to :prd
+# (keeping the previous :prd as :prd-previous); rollback restores :prd-previous.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [release, rollback]
+        default: release
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Move the PRD tag
+        env:
+          IMAGE: zalaziumcode/anox-chatbot
+          ACTION: ${{ inputs.action }}
+          REGISTRY_USER: ${{ secrets.DOCKER_USER }}
+          REGISTRY_PASSWORD: ${{ secrets.DOCKER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y skopeo; }
+          export REGISTRY_AUTH_FILE=/dev/shm/registry-auth.json
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | skopeo login --username "$REGISTRY_USER" --password-stdin docker.io
+          copy() { skopeo copy --all --preserve-digests --retry-times 3 "docker://$IMAGE:$1" "docker://$IMAGE:$2"; }
+          digest() { skopeo inspect --raw "docker://$IMAGE:$1" | sha256sum | cut -d' ' -f1; }
+          if [ "$ACTION" = release ]; then
+            if [ "$(digest latest)" = "$(digest prd)" ]; then echo 'PRD already runs latest'; exit 0; fi
+            copy prd prd-previous
+            copy latest prd
+          else
+            copy prd-previous prd
+          fi
+          echo "$IMAGE:prd = sha256:$(digest prd)"

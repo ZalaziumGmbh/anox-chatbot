@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const keyPath = process.env.ONE_COMKEY_DIR || (
+const keyPath = process.env.COMKEY_DIR || (
   process.env.NODE_ENV === "development"
     ? path.resolve(__dirname, `../../storage/comkey`)
     : path.resolve(

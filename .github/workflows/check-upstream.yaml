@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo useradd --create-home tester
           sudo install -d -o tester -g tester /home/tester/upstream
-          sudo cp .github/one-upstream.json ci/check_upstream.py /home/tester/upstream/
+          sudo cp .github/upstream.json ci/check_upstream.py /home/tester/upstream/
           sudo chown -R tester:tester /home/tester/upstream
           sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
             GH_TOKEN="$GH_TOKEN" sh -c 'cd /home/tester/upstream && python3 check_upstream.py'

@@ -73,7 +73,7 @@ jobs:
               cp -R /source/. /tmp/app/
               chown -R node:node /tmp/app
               runuser -u node -- env -i HOME=/home/node PATH=/usr/local/bin:/usr/bin:/bin \
-                CI=true GITHUB_TOKEN="$GITHUB_TOKEN" PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true ONE_SYNTHETIC_TEST=1 sh -ec '\''
+                CI=true GITHUB_TOKEN="$GITHUB_TOKEN" PUPPETEER_SKIP_DOWNLOAD=true DISABLE_TELEMETRY=true SYNTHETIC_TEST=1 sh -ec '\''
                   cd /tmp/app
                   yarn install --frozen-lockfile --non-interactive
                   for part in server collector frontend embed; do
@@ -84,7 +84,7 @@ jobs:
                   yarn prisma migrate deploy
                   yarn prisma migrate deploy
                   node scripts/security-regression.cjs
-                  node scripts/zalazium-one-smoke.cjs
+                  node scripts/managed-smoke.cjs
                   cd ..
                   yarn jest --runInBand
                   (cd embed && yarn build)
@@ -108,7 +108,7 @@ jobs:
               XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" "$@"
           }
           docker save zalaziumcode/anox-chatbot:latest | rootless docker load
-          rootless sh -c 'cd /home/tester/app && python3 server/scripts/qualify-one-image.py zalaziumcode/anox-chatbot:latest'
+          rootless sh -c 'cd /home/tester/app && python3 server/scripts/qualify-image.py zalaziumcode/anox-chatbot:latest'
       - name: Publish latest
         if: github.event_name != 'pull_request'
         env:

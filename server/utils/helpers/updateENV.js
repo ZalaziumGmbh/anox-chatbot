@@ -1455,7 +1455,7 @@ async function validatePGVectorTableName(key, prevValue, nextValue) {
 // to the process will at least alleviate that issue. It does not perform comprehensive validity checks or sanity checks
 // and is simply for debugging when the .env not found issue many come across.
 async function updateENV(newENVs = {}, force = false, userId = null) {
-  if (process.env.ONE_MANAGED_RUNTIME === "true")
+  if (process.env.MANAGED_RUNTIME === "true")
     return { newValues: {}, error: "Runtime configuration is managed by the deployment." };
   let error = "";
   const runAfterAll = [];
@@ -1538,7 +1538,7 @@ async function logChangesToEventLog(newValues = {}, userId = null) {
 
 function dumpENV() {
   // The managed deployment supplies stable credentials in RAM on every start.
-  if (process.env.ONE_MANAGED_RUNTIME === "true") return;
+  if (process.env.MANAGED_RUNTIME === "true") return;
   const fs = require("fs");
   const path = require("path");
 

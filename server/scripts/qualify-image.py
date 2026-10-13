@@ -27,9 +27,9 @@ def main(image):
     volume = name + '-data'
     password, rotated = 'Aa1!' + secrets.token_urlsafe(24), 'Bb2!' + secrets.token_urlsafe(24)
     fields = {key: secrets.token_urlsafe(32) for key in ('JWT_SECRET', 'SIG_KEY', 'SIG_SALT', 'LITE_LLM_API_KEY')}
-    fields.update(ONE_MANAGED_RUNTIME='true', ADMIN_EMAIL='zalazium@zalazium.de',
+    fields.update(MANAGED_RUNTIME='true', ADMIN_EMAIL='zalazium@zalazium.de',
                   ADMIN_PASSWORD=password, DISABLE_TELEMETRY='true', CHECKPOINT_DISABLE='1',
-                  STORAGE_DIR='/app/server/storage', ONE_COMKEY_DIR='/tmp/comkey',
+                  STORAGE_DIR='/app/server/storage', COMKEY_DIR='/tmp/comkey',
                   LLM_PROVIDER='litellm', LITE_LLM_BASE_PATH='http://127.0.0.1:1/v1',
                   LITE_LLM_MODEL_PREF='synthetic-model', EMBEDDING_ENGINE='native', VECTOR_DB='lancedb')
     def request(path, body=None, token=None):

@@ -6,7 +6,7 @@ const { User } = require("../models/user");
 const { SystemSettings } = require("../models/systemSettings");
 
 async function main() {
-  assert(process.getuid() !== 0 && process.env.ONE_SYNTHETIC_TEST === "1");
+  assert(process.getuid() !== 0 && process.env.SYNTHETIC_TEST === "1");
   assert.equal(await prisma.users.count(), 0, "Fresh synthetic database required");
   const username = "zalazium@zalazium.de";
   const firstPassword = "Synthetic-admin-Only-123!";

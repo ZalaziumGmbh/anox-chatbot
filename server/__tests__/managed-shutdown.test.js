@@ -18,7 +18,7 @@ async function exercise(failCleanup) {
       if (${failCleanup}) throw new Error('synthetic cleanup failure');
     });
     server.listen(0, '127.0.0.1', () => console.log('port:' + server.address().port));
-  `], { env: { PATH: process.env.PATH, ONE_MANAGED_RUNTIME: "true" } });
+  `], { env: { PATH: process.env.PATH, MANAGED_RUNTIME: "true" } });
   const exited = once(child, "exit");
   let output = "";
   let request;
@@ -51,14 +51,14 @@ async function exercise(failCleanup) {
 test("managed shutdown drains active HTTP before database disconnect and clean exit", () => exercise(false), 10000);
 test("failed database cleanup cannot look like a clean backup stop", () => exercise(true), 10000);
 test("legacy runtime does not acquire new signal handlers", () => {
-  const previous = process.env.ONE_MANAGED_RUNTIME;
-  delete process.env.ONE_MANAGED_RUNTIME;
+  const previous = process.env.MANAGED_RUNTIME;
+  delete process.env.MANAGED_RUNTIME;
   try {
     const before = process.listenerCount("SIGTERM");
     require(helper).managedShutdown({});
     expect(process.listenerCount("SIGTERM")).toBe(before);
   } finally {
-    if (previous === undefined) delete process.env.ONE_MANAGED_RUNTIME;
-    else process.env.ONE_MANAGED_RUNTIME = previous;
+    if (previous === undefined) delete process.env.MANAGED_RUNTIME;
+    else process.env.MANAGED_RUNTIME = previous;
   }
 });

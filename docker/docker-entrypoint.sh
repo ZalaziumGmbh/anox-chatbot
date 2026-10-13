@@ -16,12 +16,12 @@ if [ -z "$STORAGE_DIR" ]; then
     echo "================================================================"
 fi
 
-if [ "${ONE_MANAGED_RUNTIME:-false}" = "true" ]; then
+if [ "${MANAGED_RUNTIME:-false}" = "true" ]; then
   cd /app/server/ || exit 1
   export CHECKPOINT_DISABLE=1
   npx prisma generate --schema=./prisma/schema.prisma || exit 1
   npx prisma migrate deploy --schema=./prisma/schema.prisma || exit 1
-  node /app/server/scripts/zalazium-one-bootstrap.cjs || exit 1
+  node /app/server/scripts/managed-bootstrap.cjs || exit 1
   node /app/server/index.js &
   server_pid=$!
   node /app/collector/index.js &
@@ -48,8 +48,8 @@ fi
     export CHECKPOINT_DISABLE=1 &&
     npx prisma generate --schema=./prisma/schema.prisma &&
     npx prisma migrate deploy --schema=./prisma/schema.prisma &&
-    if [ "${ONE_MANAGED_RUNTIME:-false}" = "true" ]; then
-      node /app/server/scripts/zalazium-one-bootstrap.cjs
+    if [ "${MANAGED_RUNTIME:-false}" = "true" ]; then
+      node /app/server/scripts/managed-bootstrap.cjs
     fi &&
     node /app/server/index.js
 } &

@@ -11,13 +11,13 @@ jest.mock("../utils/vectorStore/resetAllVectorStores", () => ({}));
 const prisma = require("../utils/prisma");
 const { User } = require("../models/user");
 const { SystemSettings } = require("../models/systemSettings");
-const { bootstrap } = require("../scripts/zalazium-one-bootstrap.cjs");
+const { bootstrap } = require("../scripts/managed-bootstrap.cjs");
 const { updateENV, dumpENV } = require("../utils/helpers/updateENV");
 const original = process.env;
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env = { ...original, ONE_MANAGED_RUNTIME: "true", ADMIN_EMAIL: "zalazium@zalazium.de" };
+  process.env = { ...original, MANAGED_RUNTIME: "true", ADMIN_EMAIL: "zalazium@zalazium.de" };
   for (const key of ["ADMIN_PASSWORD", "JWT_SECRET", "SIG_KEY", "SIG_SALT", "LITE_LLM_API_KEY"])
     process.env[key] = "synthetic-only-credential-123!";
   prisma.users.findUnique.mockResolvedValue(null);
@@ -64,7 +64,7 @@ test("incomplete multi-user state never reopens automatic onboarding", async () 
   await expect(bootstrap()).rejects.toThrow("requires review");
 });
 test("ordinary installations retain their existing bootstrap behavior", async () => {
-  delete process.env.ONE_MANAGED_RUNTIME;
+  delete process.env.MANAGED_RUNTIME;
   await bootstrap();
   expect(prisma.users.findUnique).not.toHaveBeenCalled();
 });

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import urllib.request
 
-record = json.loads(Path('one-upstream.json').read_text())
+record = json.loads(Path('upstream.json').read_text())
 assert record['repository'] in ('BerriAI/litellm', 'Mintplex-Labs/anything-llm')
 headers = {'Accept': 'application/vnd.github+json'}
 if os.environ.get('GH_TOKEN'):

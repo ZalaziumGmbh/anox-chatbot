@@ -4,7 +4,7 @@ const { User } = require("../models/user");
 const { SystemSettings } = require("../models/systemSettings");
 
 async function bootstrap() {
-  if (process.env.ONE_MANAGED_RUNTIME !== "true") return;
+  if (process.env.MANAGED_RUNTIME !== "true") return;
   const username = process.env.ADMIN_EMAIL;
   if (username !== "zalazium@zalazium.de" ||
       ["ADMIN_PASSWORD", "JWT_SECRET", "SIG_KEY", "SIG_SALT", "LITE_LLM_API_KEY"]

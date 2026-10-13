@@ -1,6 +1,6 @@
 // Managed DEV needs a clean, bounded stop before its consistent data backup.
 function managedShutdown(server, disconnect = async () => {}) {
-  if (process.env.ONE_MANAGED_RUNTIME !== "true") return;
+  if (process.env.MANAGED_RUNTIME !== "true") return;
   let stopping = false;
   const stop = () => {
     if (stopping) return;

@@ -91,24 +91,24 @@ jobs:
                   (cd frontend && yarn build)
                 '\''
             '
-      - name: Build and test the image without registry credentials
+      - name: Build the image and qualify it rootless without registry credentials
         if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          # The rootless daemon cannot run every package postinst of the Ubuntu base, so the
+          # runner's Docker builds; the image is then tested in the tester's rootless daemon.
+          docker build -f docker/Dockerfile --secret id=github_token,env=GITHUB_TOKEN \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" -t zalaziumcode/anox-chatbot:latest .
           test_uid=$(id -u tester)
-          sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
-            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
-            REVISION="$GITHUB_SHA" GITHUB_TOKEN="$GITHUB_TOKEN" sh -c '
-              set -eu
-              cd /home/tester/app
-              docker build -f docker/Dockerfile --secret id=github_token,env=GITHUB_TOKEN \
-                --label org.opencontainers.image.revision="$REVISION" \
-                -t zalaziumcode/anox-chatbot:latest .
-              python3 server/scripts/qualify-one-image.py zalaziumcode/anox-chatbot:latest
-            '
+          rootless() {
+            sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
+              XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" "$@"
+          }
+          docker save zalaziumcode/anox-chatbot:latest | rootless docker load
+          rootless sh -c 'cd /home/tester/app && python3 server/scripts/qualify-one-image.py zalaziumcode/anox-chatbot:latest'
       - name: Publish latest
         if: github.event_name != 'pull_request'
         env:
@@ -117,13 +117,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test_uid=$(id -u tester)
-          sudo install -d -m 700 -o tester -g tester /dev/shm/registry
-          trap 'sudo rm -rf /dev/shm/registry' EXIT
-          printf '%s' "$REGISTRY_PASSWORD" | sudo runuser -u tester -- env -i HOME=/home/tester PATH=/usr/local/bin:/usr/bin:/bin \
-            XDG_RUNTIME_DIR="/run/user/${test_uid}" DOCKER_HOST="unix:///run/user/${test_uid}/docker.sock" \
-            DOCKER_CONFIG=/dev/shm/registry sh -c '
-              set -eu
-              docker login --username "$1" --password-stdin docker.io >/dev/null
-              docker push zalaziumcode/anox-chatbot:latest
-            ' sh "$REGISTRY_USER"
+          export DOCKER_CONFIG=/dev/shm/registry
+          mkdir -m 700 "$DOCKER_CONFIG"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_PASSWORD" | docker login --username "$REGISTRY_USER" --password-stdin docker.io >/dev/null
+          docker push zalaziumcode/anox-chatbot:latest

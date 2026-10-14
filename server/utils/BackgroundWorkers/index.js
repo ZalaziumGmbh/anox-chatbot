@@ -41,6 +41,11 @@ class BackgroundService {
       timeout: "6m",
       interval: "9hr",
     },
+    {
+      name: "cleanup-expired-chats",
+      timeout: "1m",
+      interval: "15m",
+    },
   ];
 
   #memoryJobs = [

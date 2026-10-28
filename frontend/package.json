@@ -18,7 +18,7 @@
     "@phosphor-icons/react": "^2.1.7",
     "@tremor/react": "^3.15.1",
     "cronstrue": "^2.50.0",
-    "dompurify": "^3.0.8",
+    "dompurify": "^3.4.17",
     "file-saver": "^2.0.5",
     "file-selector": "^0.6.0",
     "he": "^1.2.0",

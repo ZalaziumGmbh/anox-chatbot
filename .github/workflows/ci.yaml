@@ -1,6 +1,6 @@
 name: ci
 # Pull requests run the suite; every push to main is also built and published as :latest,
-# which DEV pulls automatically. PRD changes only through the release workflow.
+# which DEV pulls automatically. PRD is released only from the infra repository with make prd.
 on:
   push:
     branches: [main]

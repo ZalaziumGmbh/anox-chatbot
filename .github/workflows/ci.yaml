@@ -1,6 +1,5 @@
 name: ci
-# Pull requests run the suite; every push to main is also built and published as :latest,
-# which DEV pulls automatically. PRD is released only from the infra repository with make prd.
+# CI tests and publishes main-<commit>. Product make dev/prd explicitly deploys it.
 on:
   push:
     branches: [main]
@@ -109,7 +108,7 @@ jobs:
           }
           docker save zalaziumcode/anox-chatbot:latest | rootless docker load
           rootless sh -c 'cd /home/tester/app && python3 server/scripts/qualify-image.py zalaziumcode/anox-chatbot:latest'
-      - name: Publish latest
+      - name: Publish the tested commit
         if: github.event_name != 'pull_request'
         env:
           REGISTRY_USER: ${{ secrets.DOCKER_USER }}
@@ -117,8 +116,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export REVISION="$GITHUB_SHA"
           export DOCKER_CONFIG=/dev/shm/registry
           mkdir -m 700 "$DOCKER_CONFIG"
           trap 'rm -rf "$DOCKER_CONFIG"' EXIT
           printf '%s' "$REGISTRY_PASSWORD" | docker login --username "$REGISTRY_USER" --password-stdin docker.io >/dev/null
-          docker push zalaziumcode/anox-chatbot:latest
+          docker tag zalaziumcode/anox-chatbot:latest "zalaziumcode/anox-chatbot:main-$REVISION"
+          docker push "zalaziumcode/anox-chatbot:main-$REVISION"

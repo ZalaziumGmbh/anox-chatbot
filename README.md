@@ -1,6 +1,6 @@
 # ANOXchatbot
 
-Zalazium's AnythingLLM-based chatbot. `server/` is the Node API, `collector/`
+Zalazium's AnythingLLM based chatbot. `server/` is the Node API, `collector/`
 processes documents and `frontend/` contains the browser UI. The runtime image
 is built from `docker/Dockerfile`.
 
@@ -14,11 +14,10 @@ browser capability. Never use a production environment for a local development r
 
 ## Development
 
-The devcontainer includes Git and the product toolchain at build time. Use the
-editor's host credential forwarding or a selected [Commander](https://github.com/plaxtoris/commander)
-session: `commander up /absolute/checkout`, then `commander container ID -- COMMAND`
-with its printed ID. Accounts and development agents stay in Commander.
-Use independent worktrees for concurrent changes; keep secrets and local data out of Git.
+The devcontainer runs as root in `/workspace`, with Git and the product tools
+installed during the build. Open it with VS Code or `commander up /absolute/checkout`.
+VS Code forwards host Git credentials; Commander supplies the selected session.
+Keep secrets and local data outside Git. Use separate worktrees for concurrent work.
 
 ## Release
 

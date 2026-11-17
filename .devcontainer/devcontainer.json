@@ -1,6 +1,6 @@
 {
   "name": "anox-chatbot",
-  "remoteUser": "dev",
+  "remoteUser": "root",
   "forwardPorts": [
     3001,
     3000
@@ -41,5 +41,5 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
-  "updateRemoteUserUID": true
+  "containerUser": "root"
 }

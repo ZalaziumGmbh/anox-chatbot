@@ -5,3 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /workspace
 WORKDIR /workspace
+
+# Match the host user so manual Git and parallel worktrees share file ownership.
+RUN if ! getent group 1000 >/dev/null; then groupadd --gid 1000 dev; fi \
+    && useradd --create-home --non-unique --uid 1000 --gid 1000 --shell /bin/bash dev
+ENV PATH="/home/dev/.local/bin:${PATH}"
+

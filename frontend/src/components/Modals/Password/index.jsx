@@ -12,15 +12,16 @@ import useLogo from "../../../hooks/useLogo";
 export default function PasswordModal({ mode = "single" }) {
   const { loginLogo, isCustomLogo } = useLogo();
   return (
-    <div className="fixed inset-0 bg-zinc-950 light:bg-slate-50 flex flex-col items-center justify-center overflow-hidden">
-      <img
-        src={loginLogo}
-        alt="Logo"
-        className={`max-h-[80px] ${isCustomLogo ? "rounded-lg" : ""}`}
-        style={{ objectFit: "contain" }}
-      />
-      {mode === "single" ? <SingleUserAuth /> : <MultiUserAuth />}
-    </div>
+    <main className="fixed inset-0 overflow-y-auto bg-zinc-950 light:bg-slate-50">
+      <div className="flex min-h-full flex-col items-center justify-center p-4">
+        <img
+          src={loginLogo}
+          alt="Logo"
+          className={`max-h-[80px] max-w-full object-contain ${isCustomLogo ? "rounded-lg" : ""}`}
+        />
+        {mode === "single" ? <SingleUserAuth /> : <MultiUserAuth />}
+      </div>
+    </main>
   );
 }
 

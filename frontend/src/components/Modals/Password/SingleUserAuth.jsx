@@ -24,9 +24,10 @@ export default function SingleUserAuth() {
   } = useModal();
 
   const handleLogin = async (e) => {
+    e.preventDefault();
+    if (loading) return;
     setError(null);
     setLoading(true);
-    e.preventDefault();
     const data = {};
     const form = new FormData(e.target);
     for (var [key, value] of form.entries()) data[key] = value;
@@ -43,7 +44,6 @@ export default function SingleUserAuth() {
       }
     } else {
       setError(message);
-      setLoading(false);
     }
     setLoading(false);
   };
@@ -63,7 +63,6 @@ export default function SingleUserAuth() {
     const fetchCustomAppName = async () => {
       const { appName } = await System.fetchCustomAppName();
       setCustomAppName(appName || "");
-      setLoading(false);
     };
     fetchCustomAppName();
   }, []);
@@ -72,10 +71,10 @@ export default function SingleUserAuth() {
     <>
       <form
         onSubmit={handleLogin}
-        className="flex flex-col justify-center items-center"
+        className="flex w-full max-w-sm flex-col items-center"
       >
         <div className="flex items-start justify-between pt-7 pb-9">
-          <div className="flex items-center flex-col gap-y-[18px] max-w-[300px]">
+          <div className="flex items-center flex-col gap-y-[18px] max-w-full">
             <div className="flex gap-x-1">
               <h3 className="text-white light:text-slate-950 text-3xl leading-[28px] font-medium text-center white-space-nowrap block">
                 {t("login.multi-user.welcome")}
@@ -86,24 +85,25 @@ export default function SingleUserAuth() {
             </p>
           </div>
         </div>
-        <div className="w-full px-12">
+        <div className="w-full px-4 sm:px-12">
           <div className="w-full flex flex-col gap-y-3">
             <div className="w-full flex flex-col gap-y-2">
-              <label className="text-zinc-300 light:text-slate-800 text-sm">
+              <label htmlFor="login-password" className="text-zinc-300 light:text-slate-800 text-sm">
                 Password
               </label>
               <PasswordInput
+                id="login-password"
                 name="password"
-                containerClassName="w-[300px]"
+                containerClassName="w-full"
                 className="border-none bg-zinc-800 light:bg-slate-200 text-zinc-200 light:text-zinc-600 text-sm rounded-lg p-2.5 w-full h-[34px] focus:outline-none focus:ring-1 focus:ring-sky-300"
                 required={true}
-                autoComplete="off"
+                autoComplete="current-password"
               />
             </div>
-            {error && <p className="text-red-400 text-sm">Error: {error}</p>}
+            {error && <p role="alert" className="text-red-400 text-sm">Error: {error}</p>}
           </div>
         </div>
-        <div className="flex items-center px-12 mt-9 space-x-2 w-full flex-col gap-y-6">
+        <div className="flex items-center px-4 sm:px-12 mt-9 space-x-2 w-full flex-col gap-y-6">
           <button
             disabled={loading}
             type="submit"

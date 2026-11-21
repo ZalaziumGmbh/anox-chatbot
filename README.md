@@ -12,12 +12,16 @@ browser capability. Never use a production environment for a local development r
 
 [Upstream features, configuration and attribution](docs/reference.md).
 
+For isolated verification, CI initializes Prisma and runs the
+managed runtime checks, Jest, and the embed and frontend builds. Check sign in
+at a narrow viewport in both authentication modes, including a delayed login
+response. Use synthetic API replies for this check.
+
 ## Development
 
-The devcontainer runs as root in `/workspace`, with Git and the product tools
-installed during the build. Open it with VS Code or `commander up /absolute/checkout`.
-VS Code forwards host Git credentials; Commander supplies the selected session.
-Keep secrets and local data outside Git. Use separate worktrees for concurrent work.
+Open the checkout in VS Code with its devcontainer. It runs as root in
+`/workspace` and installs the product tools. Keep local configuration and data
+outside Git. See [agent instructions](AGENTS.md) for the project checks.
 
 ## Release
 
